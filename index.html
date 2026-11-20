@@ -255,6 +255,10 @@ function suscribir(){
 }
 
 /* ---------- lista ---------- */
+function hora(t){
+  if(!t)return '';
+  try{return new Date(t).toLocaleTimeString('es-PE',{hour:'numeric',minute:'2-digit',hour12:true,timeZone:'America/Lima'}).replace(/\s/g,' ').toLowerCase()}catch(e){return ''}
+}
 function diaTxt(f){
   var h=limaHoy(),a=new Date(Date.now()-5*3600e3-864e5).toISOString().slice(0,10);
   if(f===h)return'Hoy';if(f===a)return'Ayer';
@@ -273,7 +277,7 @@ function drawLista(){
     var d=document.createElement('div');d.className='day';d.innerHTML='<span>'+esc(diaTxt(f))+'</span><span>S/ '+money(s)+'</span>';box.appendChild(d);
     by[f].forEach(function(g){
       var r=document.createElement('div');r.className='row';
-      var sub=[g.categoria||'Sin categoría',g.tarjeta].filter(Boolean).join(' · ');
+      var sub=[hora(g.creado),g.categoria||'Sin categoría',g.tarjeta].filter(Boolean).join(' · ');
       r.innerHTML='<div class="ico">'+(ICO[g.medio]||'··')+'</div><div class="m"><b>'+esc(g.concepto||'Gasto')+(g.origen==='applepay'?'<span class="tag">auto</span>':'')+'</b><i>'+esc(sub)+'</i></div><div class="a">'+(g.moneda==='USD'?'US$ ':'')+money(g.monto)+'</div>';
       r.onclick=function(){abrirEdit(g)};box.appendChild(r);
     });
