@@ -90,10 +90,18 @@ code,.mono{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;background:
   <img src="icons/icon-192.png" alt="">
   <h1>Mis gastos</h1>
   <p id="auth-sub">Ingresa con tu cuenta.</p>
+  <div id="a-form">
   <input class="txt" id="a-mail" type="email" placeholder="Correo" autocomplete="username">
   <input class="txt" id="a-pass" type="password" placeholder="Contraseña" autocomplete="current-password">
   <button class="btn" id="a-go">Ingresar</button>
   <button class="btn sec" id="a-new">Crear mi cuenta</button>
+  <button class="btn sec" id="a-forgot" style="border:0;margin-top:4px;color:var(--mut)">Olvidé mi contraseña</button>
+  </div>
+  <div id="a-rec" class="hide">
+    <p>Escribe tu nueva contraseña.</p>
+    <input class="txt" id="a-newpass" type="password" placeholder="Nueva contraseña (8 o más)" autocomplete="new-password">
+    <button class="btn" id="a-recgo">Guardar contraseña</button>
+  </div>
   <div class="err" id="a-err"></div>
 </section>
 
@@ -193,13 +201,15 @@ function drawEntry(){
 }
 
 /* ---------- auth ---------- */
+var recovery=/type=recovery/.test(location.hash);
 async function boot(){
+  if(recovery){$('a-form').classList.add('hide');$('a-rec').classList.remove('hide');$('auth-sub').textContent='Recupera tu acceso.';show('auth');return}
   var s=(await sb.auth.getSession()).data.session;
   if(!s){$('auth-sub').textContent='Ingresa o crea tu cuenta. Tus gastos son solo tuyos.';show('auth');return}
   st.uid=s.user.id;show('app');await cargar();suscribir();
 }
 $('a-go').onclick=async function(){
-  $('a-err').textContent='';
+  $('a-err').style.color='';$('a-err').textContent='';
   var r=await sb.auth.signInWithPassword({email:$('a-mail').value.trim(),password:$('a-pass').value});
   if(r.error){$('a-err').textContent='Correo o contraseña incorrectos.';return}
   boot();
@@ -211,6 +221,18 @@ $('a-new').onclick=async function(){
   if(r.error){$('a-err').textContent=r.error.message;return}
   if(!r.data.session){$('a-err').textContent='Cuenta creada. Revisa tu correo para confirmarla y luego ingresa.';return}
   boot();
+};
+$('a-forgot').onclick=async function(){
+  var m=$('a-mail').value.trim();
+  if(!m){$('a-err').textContent='Escribe tu correo arriba y vuelve a pulsar.';return}
+  var r=await sb.auth.resetPasswordForEmail(m,{redirectTo:location.origin+location.pathname});
+  $('a-err').style.color=r.error?'':'var(--ink2)';$('a-err').textContent=r.error?'No se pudo enviar: '+r.error.message:'Te enviamos un enlace a '+m+'. Ábrelo desde este mismo dispositivo.';
+};
+$('a-recgo').onclick=async function(){
+  var p=$('a-newpass').value;if(p.length<8){$('a-err').textContent='La contraseña debe tener 8 caracteres o más.';return}
+  var r=await sb.auth.updateUser({password:p});
+  if(r.error){$('a-err').textContent=r.error.message;return}
+  recovery=false;history.replaceState(null,'',location.pathname);$('a-form').classList.remove('hide');$('a-rec').classList.add('hide');boot();
 };
 $('a-pass').addEventListener('keydown',function(e){if(e.key==='Enter')$('a-go').click()});
 $('s-out').onclick=async function(){await sb.auth.signOut();location.reload()};
