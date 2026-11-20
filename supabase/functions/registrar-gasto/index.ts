@@ -72,7 +72,9 @@ function parseAviso(texto: string, asunto: string) {
     const d = new Date(iso);
     if (!isNaN(d.getTime())) cuando = d;
   }
-  return { montoTxt, comercio: comercio.slice(0, 80), tarjeta: tarjeta.slice(0, 60), cuando };
+  const mo = plano.match(/n[uú]mero de operaci[oó]n\s*:?\s*(\d{4,})/i);
+  const operacion = mo ? mo[1] : null;
+  return { montoTxt, comercio: comercio.slice(0, 80), tarjeta: tarjeta.slice(0, 60), cuando, operacion };
 }
 
 Deno.serve(async (req: Request) => {
@@ -95,11 +97,12 @@ Deno.serve(async (req: Request) => {
   let montoIn: unknown = b.monto, comercio = String(b.comercio ?? "").trim().slice(0, 80);
   let tarjeta: string | null = String(b.tarjeta ?? "").trim().slice(0, 60) || null;
   let cuando: Date | null = null;
+  let operacion: string | null = null;
 
   if (esCorreo) {
     const p = parseAviso(String(b.texto), String(b.asunto ?? ""));
-    console.log("correo", JSON.stringify({ asunto: String(b.asunto ?? "").slice(0, 120), monto: p.montoTxt, comercio: p.comercio, tarjeta: p.tarjeta, cuando: p.cuando }));
-    montoIn = p.montoTxt; comercio = p.comercio; tarjeta = p.tarjeta || null; cuando = p.cuando;
+    console.log("correo", JSON.stringify({ asunto: String(b.asunto ?? "").slice(0, 120), monto: p.montoTxt, comercio: p.comercio, tarjeta: p.tarjeta, cuando: p.cuando, operacion: p.operacion }));
+    montoIn = p.montoTxt; comercio = p.comercio; tarjeta = p.tarjeta || null; cuando = p.cuando; operacion = p.operacion;
   } else {
     console.log("applepay", JSON.stringify({ monto: b.monto, comercio: b.comercio, tarjeta: b.tarjeta }));
   }
@@ -118,31 +121,49 @@ Deno.serve(async (req: Request) => {
     if (hit) categoria = hit.categoria;
   }
 
-  // duplicados: (1) el mismo atajo disparado dos veces en 1 minuto;
-  // (2) el mismo pago llegando por Apple Pay y por correo (mismo monto, otra fuente, ±20 min)
+  // Duplicados.
+  //  - Correo: cada aviso trae un N° de operación único; si ya existe, es el mismo correo repetido.
+  //  - Apple Pay + correo del mismo pago: el correo "reclama" UN registro de Apple Pay del mismo monto
+  //    (±20 min) que aún no esté vinculado, prefiriendo el de comercio parecido. Así, dos movimientos
+  //    distintos por el mismo monto (con N° de operación distintos) quedan como dos gastos.
   const ref = cuando ?? new Date();
   const ahora = Date.now();
-  const { data: rec } = await sb.from("gastos").select("id,origen,concepto,creado,tarjeta")
-    .eq("uid", uid).eq("monto", m.monto).in("origen", ["applepay", "correo"])
-    .gte("creado", new Date(Math.min(ref.getTime(), ahora) - 20 * 60_000).toISOString()).limit(10);
-  for (const g of rec ?? []) {
-    const dt = Math.abs(new Date(g.creado).getTime() - ref.getTime());
-    if (g.origen === origen && g.concepto === comercio &&
-        (Math.abs(new Date(g.creado).getTime() - ahora) < 60_000 || (esCorreo && dt < 60_000))) {
-      return json({ ok: true, duplicado: true });
+  const palabras = (x: string) => new Set(String(x || "").toLowerCase().split(/[^a-z0-9áéíóúñ]+/).filter((w) => w.length >= 3));
+  const parecido = (a: string, b: string) => { const A = palabras(a); let n = 0; palabras(b).forEach((w) => { if (A.has(w)) n++; }); return n; };
+
+  if (operacion) {
+    const { data: ya } = await sb.from("gastos").select("id").eq("uid", uid).eq("operacion", operacion).limit(1);
+    if (ya && ya.length) return json({ ok: true, duplicado: true, operacion });
+  }
+  const desde = new Date(Math.min(ref.getTime(), ahora) - 20 * 60_000).toISOString();
+  const { data: rec } = await sb.from("gastos").select("id,origen,concepto,creado,tarjeta,vinculado,operacion")
+    .eq("uid", uid).eq("monto", m.monto).in("origen", ["applepay", "correo"]).gte("creado", desde).limit(20);
+  const lista = rec ?? [];
+
+  // mismo atajo de Apple Pay disparado dos veces en 1 minuto
+  if (!esCorreo && lista.some((g) => g.origen === "applepay" && g.concepto === comercio &&
+      Math.abs(new Date(g.creado).getTime() - ahora) < 60_000)) {
+    return json({ ok: true, duplicado: true });
+  }
+
+  const otra = esCorreo ? "applepay" : "correo";
+  const cand = lista
+    .filter((g) => g.origen === otra && !g.vinculado && Math.abs(new Date(g.creado).getTime() - ref.getTime()) < 20 * 60_000)
+    .sort((x, y) => (parecido(comercio, y.concepto) - parecido(comercio, x.concepto)) ||
+      (Math.abs(new Date(x.creado).getTime() - ref.getTime()) - Math.abs(new Date(y.creado).getTime() - ref.getTime())))[0];
+  if (cand) {
+    const upd: Record<string, unknown> = { vinculado: true };
+    if (esCorreo) {
+      if (operacion) upd.operacion = operacion;
+      if (tarjeta && !String(cand.tarjeta ?? "").includes("•")) upd.tarjeta = tarjeta;
     }
-    if (g.origen !== origen && dt < 20 * 60_000) {
-      // ya estaba por la otra vía: completa la tarjeta si faltaba y no duplica
-      if (esCorreo && tarjeta && !String(g.tarjeta ?? "").includes("•")) {
-        await sb.from("gastos").update({ tarjeta }).eq("id", g.id);
-      }
-      return json({ ok: true, duplicado: true, via: g.origen });
-    }
+    await sb.from("gastos").update(upd).eq("id", cand.id);
+    return json({ ok: true, duplicado: true, via: cand.origen });
   }
 
   const fila: Record<string, unknown> = {
     monto: m.monto, moneda: m.moneda, concepto: comercio || null, categoria, medio: "tarjeta",
-    tarjeta, origen, uid,
+    tarjeta, origen, uid, operacion,
   };
   if (cuando) {
     fila.creado = cuando.toISOString();
