@@ -93,7 +93,6 @@ code,.mono{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;background:
   <input class="txt" id="a-mail" type="email" placeholder="Correo" autocomplete="username">
   <input class="txt" id="a-pass" type="password" placeholder="Contraseña" autocomplete="current-password">
   <button class="btn" id="a-go">Ingresar</button>
-  <button class="btn sec hide" id="a-new">Crear cuenta (primera vez)</button>
   <div class="err" id="a-err"></div>
 </section>
 
@@ -195,15 +194,8 @@ function drawEntry(){
 /* ---------- auth ---------- */
 async function boot(){
   var s=(await sb.auth.getSession()).data.session;
-  if(!s){
-    var h=false;try{var r=await sb.rpc('hay_duenio');h=!!r.data}catch(e){}
-    $('a-new').classList.toggle('hide',h);
-    $('auth-sub').textContent=h?'Ingresa con tu cuenta.':'Primera vez: crea tu cuenta. Será la única.';
-    show('auth');return;
-  }
-  var d=await sb.rpc('es_duenio');
-  if(!d.data){await sb.auth.signOut();$('a-err').textContent='Esta cuenta no tiene acceso.';show('auth');return}
-  show('app');await cargar();suscribir();
+  if(!s){$('auth-sub').textContent='Ingresa con tu cuenta.';show('auth');return}
+  st.uid=s.user.id;show('app');await cargar();suscribir();
 }
 $('a-go').onclick=async function(){
   $('a-err').textContent='';
@@ -211,14 +203,7 @@ $('a-go').onclick=async function(){
   if(r.error){$('a-err').textContent='Correo o contraseña incorrectos.';return}
   boot();
 };
-$('a-new').onclick=async function(){
-  $('a-err').textContent='';
-  var p=$('a-pass').value;if(p.length<8){$('a-err').textContent='La contraseña debe tener 8 caracteres o más.';return}
-  var r=await sb.auth.signUp({email:$('a-mail').value.trim(),password:p});
-  if(r.error){$('a-err').textContent=r.error.message;return}
-  if(!r.data.session){$('a-err').textContent='Cuenta creada. Si pide confirmar correo, desactiva “Confirm email” en Supabase e ingresa.';return}
-  boot();
-};
+$('a-pass').addEventListener('keydown',function(e){if(e.key==='Enter')$('a-go').click()});
 $('s-out').onclick=async function(){await sb.auth.signOut();location.reload()};
 
 /* ---------- datos ---------- */
@@ -287,7 +272,7 @@ $('e-save').onclick=async function(){
   if(r.error){toast('Error: '+r.error.message);return}
   if($('e-reg').checked&&!$('e-reg-w').classList.contains('hide')){
     var p=(g.concepto||'').toLowerCase().trim().slice(0,30);
-    await sb.from('reglas').upsert({palabra:p,categoria:st.ecat},{onConflict:'palabra'});
+    await sb.from('reglas').upsert({uid:st.uid,palabra:p,categoria:st.ecat},{onConflict:'uid,palabra'});
   }
   $('d-edit').close();toast('Cambios guardados');cargar();
 };
@@ -330,13 +315,13 @@ function drawSet(){
 $('b-set').onclick=function(){drawSet();$('d-set').showModal()};
 $('s-cats').onclick=async function(e){var c=e.target.getAttribute&&e.target.getAttribute('data-c');if(!c)return;await sb.from('categorias').delete().eq('nombre',c);await cargar();drawSet()};
 $('s-regs').onclick=async function(e){var c=e.target.getAttribute&&e.target.getAttribute('data-r');if(!c)return;await sb.from('reglas').delete().eq('palabra',c);await cargar();drawSet()};
-$('s-addcat').onclick=async function(){var n=$('s-newcat').value.trim();if(!n)return;await sb.from('categorias').insert({nombre:n,orden:st.cats.length+1});$('s-newcat').value='';await cargar();drawSet()};
-$('s-addreg').onclick=async function(){var w=$('s-rw').value.trim().toLowerCase();if(!w)return;await sb.from('reglas').upsert({palabra:w,categoria:$('s-rc').value},{onConflict:'palabra'});$('s-rw').value='';await cargar();drawSet()};
+$('s-addcat').onclick=async function(){var n=$('s-newcat').value.trim();if(!n)return;await sb.from('categorias').insert({uid:st.uid,nombre:n,orden:st.cats.length+1});$('s-newcat').value='';await cargar();drawSet()};
+$('s-addreg').onclick=async function(){var w=$('s-rw').value.trim().toLowerCase();if(!w)return;await sb.from('reglas').upsert({uid:st.uid,palabra:w,categoria:$('s-rc').value},{onConflict:'uid,palabra'});$('s-rw').value='';await cargar();drawSet()};
 $('s-tok').onclick=async function(){
   if(!confirm('Se creará una clave nueva y la anterior dejará de funcionar. ¿Continuar?'))return;
   var a=new Uint8Array(24);crypto.getRandomValues(a);
   var tk=Array.from(a).map(function(x){return x.toString(16).padStart(2,'0')}).join('');
-  var r=await sb.from('atajo').upsert({id:1,token:tk},{onConflict:'id'});
+  var r=await sb.from('atajo').upsert({uid:st.uid,token:tk},{onConflict:'uid'});
   if(r.error){toast('Error: '+r.error.message);return}
   $('s-url').textContent=C.SUPABASE_URL+'/functions/v1/registrar-gasto';
   $('s-body').textContent=JSON.stringify({token:tk,monto:'‹Monto›',comercio:'‹Comercio›',tarjeta:'‹Tarjeta›'},null,1);
