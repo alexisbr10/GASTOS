@@ -1,0 +1,154 @@
+import { createClient } from "jsr:@supabase/supabase-js@2";
+
+// Recibe gastos automáticos de dos fuentes (cada persona se identifica con su token, tabla `atajo`):
+//  - Apple Pay (automatización Wallet):   { token, monto, comercio, tarjeta }
+//  - Correo de alerta del banco (Mail):   { token, texto, asunto }
+// Solo crea gastos de esa persona. Evita duplicar el mismo pago que llega por las dos vías.
+const CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+const json = (o: unknown, status = 200) =>
+  new Response(JSON.stringify(o), { status, headers: { ...CORS, "Content-Type": "application/json" } });
+
+function parseMonto(v: unknown) {
+  const raw = String(v ?? "").trim();
+  if (!raw) return null;
+  const usd = /us\s*\$|usd|d[oó]lar/i.test(raw) || (/\$/.test(raw) && !/s\/|pen|sol/i.test(raw));
+  let s = raw.replace(/[^0-9.,]/g, "");
+  if (s.includes(",") && s.includes(".")) {
+    s = s.lastIndexOf(",") > s.lastIndexOf(".") ? s.replace(/\./g, "").replace(",", ".") : s.replace(/,/g, "");
+  } else if (s.includes(",")) {
+    s = /,\d{1,2}$/.test(s) ? s.replace(",", ".") : s.replace(/,/g, "");
+  }
+  const n = Math.abs(parseFloat(s));
+  if (!isFinite(n) || n <= 0 || n > 10_000_000) return null;
+  return { monto: Math.round(n * 100) / 100, moneda: usd ? "USD" : "PEN" };
+}
+
+const MESES: Record<string, number> = {
+  enero: 1, febrero: 2, marzo: 3, abril: 4, mayo: 5, junio: 6, julio: 7, agosto: 8,
+  septiembre: 9, setiembre: 9, octubre: 10, noviembre: 11, diciembre: 12,
+};
+const MON = "(?:S\\/\\.?|US\\$|USD|PEN|\\$)";
+
+// Lee el texto de un correo de alerta de consumo (formato BCP y genéricos).
+function parseAviso(texto: string, asunto: string) {
+  const t = (asunto + "\n" + texto).replace(/ /g, " ");
+  const plano = t.replace(/\s+/g, " ");
+  let montoTxt = "", comercio = "", tarjeta = "";
+
+  // "Realizaste un consumo de S/ 6.80 con tu Tarjeta de Crédito BCP en IZI*PUNKU MARKET."
+  const m1 = t.match(new RegExp("consumo de\\s*(" + MON + "\\s*[\\d.,]+)\\s*con (?:tu|su)\\s+([^\\n]+?)\\s+en\\s+([^\\n]+?)\\.?[ \\t]*(?:\\n|$)", "i"))
+    || plano.match(new RegExp("consumo de\\s*(" + MON + "\\s*[\\d.,]+)\\s*con (?:tu|su)\\s+(.+?)\\s+en\\s+(.+?)(?:\\.\\s+(?=Por|Para|Te |Si |Gracias)|\\.?\\s*$)", "i"));
+  if (m1) { montoTxt = m1[1]; tarjeta = m1[2]; comercio = m1[3]; }
+
+  if (!montoTxt) {
+    const m2 = plano.match(new RegExp("(?:total del consumo|monto|importe)\\s*:?\\s*(" + MON + "\\s*[\\d.,]+)", "i"))
+      || plano.match(new RegExp("(" + MON + "\\s*\\d[\\d.,]*)", "i"));
+    if (m2) montoTxt = m2[1];
+  }
+  if (!comercio) {
+    const m3 = t.match(/(?:empresa|comercio|establecimiento)\s*:?\s*\n?\s*([^\n]{2,60})/i);
+    if (m3) comercio = m3[1].trim();
+  }
+  comercio = comercio.replace(/\s+(N[uú]mero|Fecha|Operaci[oó]n|Monto|Importe|Tarjeta)\b.*$/i, "").replace(/[.\s]+$/, "").trim();
+
+  const last4 = plano.match(/\*{3,}\s*(\d{4})/);
+  if (!tarjeta) {
+    const mt = plano.match(/tarjeta de (cr[eé]dito|d[eé]bito)(\s+\w+)?/i);
+    if (mt) tarjeta = mt[0];
+  }
+  if (last4) tarjeta = (tarjeta ? tarjeta + " " : "") + "•" + last4[1];
+
+  // "20 de noviembre de 2026 - 02:26 PM"
+  let cuando: Date | null = null;
+  const mf = plano.match(/(\d{1,2}) de ([a-zé]+) de (\d{4})\s*[-–,]?\s*(\d{1,2}):(\d{2})\s*([AP])\.?\s*M/i);
+  if (mf && MESES[mf[2].toLowerCase()]) {
+    let h = parseInt(mf[4]) % 12;
+    if (mf[6].toUpperCase() === "P") h += 12;
+    const iso = `${mf[3]}-${String(MESES[mf[2].toLowerCase()]).padStart(2, "0")}-${mf[1].padStart(2, "0")}T${String(h).padStart(2, "0")}:${mf[5]}:00-05:00`;
+    const d = new Date(iso);
+    if (!isNaN(d.getTime())) cuando = d;
+  }
+  return { montoTxt, comercio: comercio.slice(0, 80), tarjeta: tarjeta.slice(0, 60), cuando };
+}
+
+Deno.serve(async (req: Request) => {
+  if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
+  if (req.method !== "POST") return json({ ok: false, error: "metodo" }, 405);
+  let b: Record<string, unknown>;
+  try { b = await req.json(); } catch { return json({ ok: false, error: "json" }, 400); }
+
+  const token = String(b.token ?? "").trim();
+  if (token.length < 20) return json({ ok: false, error: "token" }, 401);
+
+  const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, {
+    auth: { persistSession: false },
+  });
+  const { data: at } = await sb.from("atajo").select("uid").eq("token", token).maybeSingle();
+  if (!at) return json({ ok: false, error: "token" }, 401);
+  const uid = at.uid as string;
+
+  const esCorreo = b.texto != null && String(b.texto).trim() !== "";
+  let montoIn: unknown = b.monto, comercio = String(b.comercio ?? "").trim().slice(0, 80);
+  let tarjeta: string | null = String(b.tarjeta ?? "").trim().slice(0, 60) || null;
+  let cuando: Date | null = null;
+
+  if (esCorreo) {
+    const p = parseAviso(String(b.texto), String(b.asunto ?? ""));
+    console.log("correo", JSON.stringify({ asunto: String(b.asunto ?? "").slice(0, 120), monto: p.montoTxt, comercio: p.comercio, tarjeta: p.tarjeta, cuando: p.cuando }));
+    montoIn = p.montoTxt; comercio = p.comercio; tarjeta = p.tarjeta || null; cuando = p.cuando;
+  } else {
+    console.log("applepay", JSON.stringify({ monto: b.monto, comercio: b.comercio, tarjeta: b.tarjeta }));
+  }
+
+  const m = parseMonto(montoIn);
+  if (!m) return json({ ok: false, error: "monto" }, 400);
+  const origen = esCorreo ? "correo" : "applepay";
+
+  // categoría automática según el comercio (reglas de esa persona)
+  let categoria: string | null = null;
+  if (comercio) {
+    const { data: reglas } = await sb.from("reglas").select("palabra,categoria").eq("uid", uid);
+    const c = comercio.toLowerCase();
+    const hit = (reglas ?? []).filter((r) => c.includes(r.palabra.toLowerCase()))
+      .sort((x, y) => y.palabra.length - x.palabra.length)[0];
+    if (hit) categoria = hit.categoria;
+  }
+
+  // duplicados: (1) el mismo atajo disparado dos veces en 1 minuto;
+  // (2) el mismo pago llegando por Apple Pay y por correo (mismo monto, otra fuente, ±20 min)
+  const ref = cuando ?? new Date();
+  const ahora = Date.now();
+  const { data: rec } = await sb.from("gastos").select("id,origen,concepto,creado,tarjeta")
+    .eq("uid", uid).eq("monto", m.monto).in("origen", ["applepay", "correo"])
+    .gte("creado", new Date(Math.min(ref.getTime(), ahora) - 20 * 60_000).toISOString()).limit(10);
+  for (const g of rec ?? []) {
+    const dt = Math.abs(new Date(g.creado).getTime() - ref.getTime());
+    if (g.origen === origen && g.concepto === comercio &&
+        (Math.abs(new Date(g.creado).getTime() - ahora) < 60_000 || (esCorreo && dt < 60_000))) {
+      return json({ ok: true, duplicado: true });
+    }
+    if (g.origen !== origen && dt < 20 * 60_000) {
+      // ya estaba por la otra vía: completa la tarjeta si faltaba y no duplica
+      if (esCorreo && tarjeta && !String(g.tarjeta ?? "").includes("•")) {
+        await sb.from("gastos").update({ tarjeta }).eq("id", g.id);
+      }
+      return json({ ok: true, duplicado: true, via: g.origen });
+    }
+  }
+
+  const fila: Record<string, unknown> = {
+    monto: m.monto, moneda: m.moneda, concepto: comercio || null, categoria, medio: "tarjeta",
+    tarjeta, origen, uid,
+  };
+  if (cuando) {
+    fila.creado = cuando.toISOString();
+    fila.fecha = new Date(cuando.getTime() - 5 * 3600e3).toISOString().slice(0, 10);
+  }
+  const { error } = await sb.from("gastos").insert(fila);
+  if (error) { console.log("error guardar", error.message); return json({ ok: false, error: "guardar" }, 500); }
+  return json({ ok: true, origen, monto: m.monto, comercio, categoria });
+});
