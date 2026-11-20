@@ -93,6 +93,7 @@ code,.mono{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;background:
   <input class="txt" id="a-mail" type="email" placeholder="Correo" autocomplete="username">
   <input class="txt" id="a-pass" type="password" placeholder="Contraseña" autocomplete="current-password">
   <button class="btn" id="a-go">Ingresar</button>
+  <button class="btn sec" id="a-new">Crear mi cuenta</button>
   <div class="err" id="a-err"></div>
 </section>
 
@@ -194,13 +195,21 @@ function drawEntry(){
 /* ---------- auth ---------- */
 async function boot(){
   var s=(await sb.auth.getSession()).data.session;
-  if(!s){$('auth-sub').textContent='Ingresa con tu cuenta.';show('auth');return}
+  if(!s){$('auth-sub').textContent='Ingresa o crea tu cuenta. Tus gastos son solo tuyos.';show('auth');return}
   st.uid=s.user.id;show('app');await cargar();suscribir();
 }
 $('a-go').onclick=async function(){
   $('a-err').textContent='';
   var r=await sb.auth.signInWithPassword({email:$('a-mail').value.trim(),password:$('a-pass').value});
   if(r.error){$('a-err').textContent='Correo o contraseña incorrectos.';return}
+  boot();
+};
+$('a-new').onclick=async function(){
+  $('a-err').textContent='';
+  var p=$('a-pass').value;if(p.length<8){$('a-err').textContent='La contraseña debe tener 8 caracteres o más.';return}
+  var r=await sb.auth.signUp({email:$('a-mail').value.trim(),password:p});
+  if(r.error){$('a-err').textContent=r.error.message;return}
+  if(!r.data.session){$('a-err').textContent='Cuenta creada. Revisa tu correo para confirmarla y luego ingresa.';return}
   boot();
 };
 $('a-pass').addEventListener('keydown',function(e){if(e.key==='Enter')$('a-go').click()});

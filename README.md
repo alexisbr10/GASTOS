@@ -4,8 +4,8 @@ App personal para registrar gastos del día. Supabase (proyecto GASTOS PERSONALE
 
 ## Puesta en marcha
 1. GitHub Pages: Settings → Pages → rama main / root.
-2. Supabase → Authentication → Providers → Email: desactiva **Allow new users to sign up** (registro solo por invitación).
-3. Para dar acceso a alguien: Supabase → Authentication → Users → **Add user → Create new user** (correo + contraseña, marca *Auto Confirm User*). Le pasas el correo y la contraseña.
+2. Supabase → Authentication → Providers → Email: deja **Allow new users to sign up** activado; cada persona se crea su cuenta desde la web ("Crear mi cuenta").
+3. (Opcional) Para crear una cuenta tú: Authentication → Users → Add user.
 4. Cada persona ve solo sus propios gastos, categorías, reglas y clave de Apple Pay.
 5. En el iPhone: Safari → Compartir → Añadir a pantalla de inicio.
 
