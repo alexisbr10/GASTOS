@@ -64,7 +64,7 @@ function parseAviso(texto: string, asunto: string) {
 
   // "20 de noviembre de 2026 - 02:26 PM"
   let cuando: Date | null = null;
-  const mf = plano.match(/(\d{1,2}) de ([a-zé]+) de (\d{4})\s*[-–,]?\s*(\d{1,2}):(\d{2})\s*([AP])\.?\s*M/i);
+  const mf = plano.match(/(\d{1,2})\s+(?:de\s+)?([a-zé]+)\s+(?:de\s+)?(\d{4})\s*[-–,]?\s*(\d{1,2}):(\d{2})\s*([AP])\.?\s*M/i);
   if (mf && MESES[mf[2].toLowerCase()]) {
     let h = parseInt(mf[4]) % 12;
     if (mf[6].toUpperCase() === "P") h += 12;
@@ -75,6 +75,29 @@ function parseAviso(texto: string, asunto: string) {
   const mo = plano.match(/n[uú]mero de operaci[oó]n\s*:?\s*(\d{4,})/i);
   const operacion = mo ? mo[1] : null;
   return { montoTxt, comercio: comercio.slice(0, 80), tarjeta: tarjeta.slice(0, 60), cuando, operacion };
+}
+
+// Correo de Yape: "¡Acabas de yapear exitosamente!" — Monto de yapeo S/ 38.00, Nombre del Beneficiario, Nº de operación.
+function esYape(texto: string, asunto: string) {
+  return /acabas de yapear|monto de yapeo/i.test(asunto + " " + texto);
+}
+function esYapeRecibido(texto: string, asunto: string) {
+  const t = asunto + " " + texto;
+  return /te yapearon|recibiste un yape|te han yapeado|te enviaron/i.test(t) && !/acabas de yapear/i.test(t);
+}
+function parseYape(texto: string, asunto: string) {
+  const plano = (asunto + "\n" + texto).replace(/\u00a0/g, " ").replace(/\s+/g, " ");
+  const mm = plano.match(/monto de yapeo\*?\s*:?\s*((?:S\/\.?|US\$|\$)?\s*[\d.,]+)/i)
+    || plano.match(/((?:S\/\.?|US\$)\s*\d[\d.,]*)/i);
+  const mb = plano.match(/nombre del beneficiario\s*:?\s*(.+?)(?=\s*(?:N[º°o]\.?\s*de operaci|Celular|Fecha|\*Por tu|$))/i);
+  const mo = plano.match(/N[º°o]\.?\s*de operaci[oó]n\s*:?\s*(\d{4,})/i);
+  const f = parseAviso(texto, asunto).cuando;
+  return {
+    montoTxt: mm ? (/[S$]/.test(mm[1]) ? mm[1] : "S/ " + mm[1]) : "",
+    comercio: (mb ? mb[1].trim() : "Yape").slice(0, 80),
+    tarjeta: "", cuando: f,
+    operacion: mo ? "Y" + mo[1] : null,
+  };
 }
 
 Deno.serve(async (req: Request) => {
@@ -99,8 +122,13 @@ Deno.serve(async (req: Request) => {
   let cuando: Date | null = null;
   let operacion: string | null = null;
 
+  let medio = "tarjeta";
   if (esCorreo) {
-    const p = parseAviso(String(b.texto), String(b.asunto ?? ""));
+    const tx = String(b.texto), asu = String(b.asunto ?? "");
+    if (esYapeRecibido(tx, asu)) return json({ ok: true, ignorado: "yape recibido" });
+    const yape = esYape(tx, asu);
+    if (yape) medio = "yape";
+    const p = yape ? parseYape(tx, asu) : parseAviso(tx, asu);
     console.log("correo", JSON.stringify({ asunto: String(b.asunto ?? "").slice(0, 120), monto: p.montoTxt, comercio: p.comercio, tarjeta: p.tarjeta, cuando: p.cuando, operacion: p.operacion }));
     montoIn = p.montoTxt; comercio = p.comercio; tarjeta = p.tarjeta || null; cuando = p.cuando; operacion = p.operacion;
   } else {
@@ -136,7 +164,7 @@ Deno.serve(async (req: Request) => {
     if (ya && ya.length) return json({ ok: true, duplicado: true, operacion });
   }
   const desde = new Date(Math.min(ref.getTime(), ahora) - 20 * 60_000).toISOString();
-  const { data: rec } = await sb.from("gastos").select("id,origen,concepto,creado,tarjeta,vinculado,operacion")
+  const { data: rec } = await sb.from("gastos").select("id,origen,medio,concepto,creado,tarjeta,vinculado,operacion")
     .eq("uid", uid).eq("monto", m.monto).in("origen", ["applepay", "correo"]).gte("creado", desde).limit(20);
   const lista = rec ?? [];
 
@@ -146,12 +174,25 @@ Deno.serve(async (req: Request) => {
     return json({ ok: true, duplicado: true });
   }
 
+  if (medio === "yape") {
+    const { data: man } = await sb.from("gastos").select("id,concepto,creado")
+      .eq("uid", uid).eq("monto", m.monto).eq("origen", "manual").eq("medio", "yape").eq("vinculado", false)
+      .gte("creado", new Date(ref.getTime() - 30 * 60_000).toISOString())
+      .lte("creado", new Date(ref.getTime() + 30 * 60_000).toISOString()).limit(1);
+    if (man && man.length) {
+      const upd: Record<string, unknown> = { vinculado: true, operacion };
+      if (!man[0].concepto) upd.concepto = comercio;
+      await sb.from("gastos").update(upd).eq("id", man[0].id);
+      return json({ ok: true, duplicado: true, via: "manual" });
+    }
+  }
+
   const otra = esCorreo ? "applepay" : "correo";
   const cand = lista
-    .filter((g) => g.origen === otra && !g.vinculado && Math.abs(new Date(g.creado).getTime() - ref.getTime()) < 20 * 60_000)
+    .filter((g) => g.origen === otra && g.medio === "tarjeta" && !g.vinculado && Math.abs(new Date(g.creado).getTime() - ref.getTime()) < 20 * 60_000)
     .sort((x, y) => (parecido(comercio, y.concepto) - parecido(comercio, x.concepto)) ||
       (Math.abs(new Date(x.creado).getTime() - ref.getTime()) - Math.abs(new Date(y.creado).getTime() - ref.getTime())))[0];
-  if (cand) {
+  if (cand && medio !== "yape") {
     const upd: Record<string, unknown> = { vinculado: true };
     if (esCorreo) {
       if (operacion) upd.operacion = operacion;
@@ -162,7 +203,7 @@ Deno.serve(async (req: Request) => {
   }
 
   const fila: Record<string, unknown> = {
-    monto: m.monto, moneda: m.moneda, concepto: comercio || null, categoria, medio: "tarjeta",
+    monto: m.monto, moneda: m.moneda, concepto: comercio || null, categoria, medio,
     tarjeta, origen, uid, operacion,
   };
   if (cuando) {
