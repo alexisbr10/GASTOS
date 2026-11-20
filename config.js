@@ -1,0 +1,4 @@
+window.GASTOS_CONFIG = {
+  SUPABASE_URL: 'https://hlemajndaygejtxfbhyt.supabase.co',
+  SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhsZW1ham5kYXlnZWp0eGZiaHl0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTUxODU4NTksImV4cCI6MjExMDc2MTg1OX0.5bIqV-L1AFtRMc0GpDixBZHTaH1gYBHLU4L4Sai5_WE'
+};
