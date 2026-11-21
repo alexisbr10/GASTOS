@@ -61,8 +61,20 @@ nav button.on{color:var(--ink2);box-shadow:inset 0 3px 0 var(--mint)}
 .bar .t div{height:100%;background:var(--ink2);border-radius:9px}
 .mes{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
 .mes button{border:0;background:var(--bg);width:38px;height:38px;border-radius:11px;font-size:18px;cursor:pointer}
-.mes b{font-size:18px;text-transform:capitalize}
+.mes b{font-size:18px}
 .tot{font-size:34px;font-weight:800;letter-spacing:-.02em}
+.seg{display:flex;background:var(--bg);border-radius:12px;padding:4px;margin-bottom:12px}
+.seg button{flex:1;border:0;background:transparent;padding:9px 6px;border-radius:9px;font-weight:700;font-size:14px;color:var(--mut);cursor:pointer}
+.seg button.on{background:var(--card);color:var(--tx);box-shadow:0 1px 3px rgba(15,61,51,.15)}
+.dona{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+.dona svg{flex:none;width:150px;height:150px;margin:0 auto}
+.dona .ley{flex:1;min-width:180px}
+.ley .it{display:flex;align-items:center;gap:8px;padding:6px 0;font-size:14px;border-bottom:1px solid var(--line)}
+.ley .it:last-child{border-bottom:0}
+.ley .dot{width:12px;height:12px;border-radius:4px;flex:none}
+.ley .n{flex:1;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ley .p{color:var(--mut);font-size:13px;width:40px;text-align:right}
+.ley .v{font-weight:700;width:86px;text-align:right}
 #auth{max-width:380px;margin:0 auto;padding:calc(60px + env(safe-area-inset-top)) 20px}
 #auth img{width:72px;height:72px;border-radius:18px}
 #auth h1{font-size:28px;margin:14px 0 4px}
@@ -123,11 +135,12 @@ code,.mono{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;background:
     </div>
     <div id="v-res" class="hide">
       <div class="card">
-        <div class="mes"><button id="m-prev" aria-label="Mes anterior">‹</button><b id="m-name"></b><button id="m-next" aria-label="Mes siguiente">›</button></div>
+        <div class="seg" role="tablist"><button data-per="dia">Día</button><button data-per="semana">Semana</button><button data-per="mes" class="on">Mes</button></div>
+        <div class="mes"><button id="m-prev" aria-label="Anterior">‹</button><b id="m-name"></b><button id="m-next" aria-label="Siguiente">›</button></div>
         <div class="tot" id="m-tot"></div>
         <div style="color:var(--mut);font-size:14px" id="m-sub"></div>
       </div>
-      <div class="card"><h3 style="margin:0 0 4px">Por categoría</h3><div id="m-cat"></div></div>
+      <div class="card"><h3 style="margin:0 0 10px">Por categoría</h3><div id="m-cat"></div></div>
       <div class="card"><h3 style="margin:0 0 4px">Por medio de pago</h3><div id="m-med"></div></div>
     </div>
   </main>
@@ -185,8 +198,8 @@ var C=window.GASTOS_CONFIG, sb=supabase.createClient(C.SUPABASE_URL,C.SUPABASE_A
 var $=function(i){return document.getElementById(i)};
 var MEDIOS=[['yape','Yape'],['tarjeta','Tarjeta'],['efectivo','Efectivo'],['transferencia','Transf.']];
 var ICO={yape:'YP',tarjeta:'TC',efectivo:'EF',transferencia:'TR',otro:'··'};
-var st={gastos:[],cats:[],regs:[],medio:'yape',cat:'',mes:new Date(),edit:null,emedio:'yape',ecat:''};
-try{st.medio=localStorage.getItem('medio')||'yape'}catch(e){}
+var st={gastos:[],cats:[],regs:[],medio:'yape',cat:'',per:'mes',ref:'',edit:null,emedio:'yape',ecat:''};
+try{st.medio=localStorage.getItem('medio')||'yape';st.per=localStorage.getItem('per')||'mes'}catch(e){}
 function limaHoy(){return new Date(Date.now()-5*3600e3).toISOString().slice(0,10)}
 function money(n){return Number(n).toLocaleString('es-PE',{minimumFractionDigits:2,maximumFractionDigits:2})}
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
@@ -319,25 +332,59 @@ $('e-del').onclick=async function(){
 };
 
 /* ---------- resumen ---------- */
+var COLORES=['#1c7c63','#e07a3f','#3b6fd4','#d4a72c','#9b4dca','#d64545','#2aa198','#7f9a3a','#e05c9c','#5c6f82','#a0662f','#4cb3e6'];
+function colorCat(k){if(!k||k==='Sin categoría')return '#a3b1ab';var i=st.cats.indexOf(k);if(i<0){i=0;for(var j=0;j<k.length;j++)i=(i*31+k.charCodeAt(j))>>>0}return COLORES[i%COLORES.length]}
+function dstr(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
+function rango(){
+  var r=new Date(st.ref+'T12:00:00'),a,b,lab;
+  if(st.per==='dia'){a=b=st.ref;lab=diaTxt(st.ref);if(lab==='Hoy'||lab==='Ayer')lab+=' · '+r.toLocaleDateString('es-PE',{day:'numeric',month:'short'})}
+  else if(st.per==='semana'){var dw=(r.getDay()+6)%7,l=new Date(r);l.setDate(r.getDate()-dw);var d2=new Date(l);d2.setDate(l.getDate()+6);a=dstr(l);b=dstr(d2);
+    lab=l.getDate()+(l.getMonth()!==d2.getMonth()?' '+l.toLocaleDateString('es-PE',{month:'short'}):'')+' – '+d2.toLocaleDateString('es-PE',{day:'numeric',month:'short'})}
+  else{var f=new Date(r.getFullYear(),r.getMonth(),1),u=new Date(r.getFullYear(),r.getMonth()+1,0);a=dstr(f);b=dstr(u);lab=r.toLocaleDateString('es-PE',{month:'long',year:'numeric'})}
+  return{a:a,b:b,lab:lab.charAt(0).toUpperCase()+lab.slice(1)};
+}
+function dona(m,ks,tot){
+  var R=60,C=2*Math.PI*R,off=0,h='<svg viewBox="0 0 150 150" role="img" aria-label="Distribución por categoría"><g transform="rotate(-90 75 75)">';
+  if(ks.length===1){h+='<circle cx="75" cy="75" r="'+R+'" fill="none" stroke="'+colorCat(ks[0])+'" stroke-width="22"/>'}
+  else ks.forEach(function(k){var L=m[k]/tot*C;h+='<circle cx="75" cy="75" r="'+R+'" fill="none" stroke="'+colorCat(k)+'" stroke-width="22" stroke-dasharray="'+Math.max(0,L-1.5).toFixed(2)+' '+C.toFixed(2)+'" stroke-dashoffset="'+(-off).toFixed(2)+'"/>';off+=L});
+  h+='</g><text x="75" y="72" text-anchor="middle" font-size="11" fill="currentColor" opacity=".6">Total</text><text x="75" y="90" text-anchor="middle" font-size="16" font-weight="800" fill="currentColor">S/ '+(tot>=10000?Math.round(tot).toLocaleString('es-PE'):money(tot))+'</text></svg>';
+  return h;
+}
 function drawRes(){
-  var y=st.mes.getFullYear(),mo=st.mes.getMonth(),pre=y+'-'+String(mo+1).padStart(2,'0');
-  $('m-name').textContent=st.mes.toLocaleDateString('es-PE',{month:'long',year:'numeric'});
-  var gs=st.gastos.filter(function(g){return g.fecha.slice(0,7)===pre&&g.moneda!=='USD'});
+  if(!st.ref)st.ref=limaHoy();
+  var rg=rango();
+  $('m-name').textContent=rg.lab;
+  document.querySelectorAll('.seg button').forEach(function(b){b.classList.toggle('on',b.getAttribute('data-per')===st.per)});
+  var gs=st.gastos.filter(function(g){return g.fecha>=rg.a&&g.fecha<=rg.b&&g.moneda!=='USD'});
   var tot=gs.reduce(function(a,g){return a+Number(g.monto)},0);
   $('m-tot').textContent='S/ '+money(tot);
   var dias=new Set(gs.map(function(g){return g.fecha})).size;
-  $('m-sub').textContent=gs.length+' gastos'+(dias?' · promedio S/ '+money(tot/dias)+' por día con gasto':'');
-  function bars(id,key,lab){
-    var m={};gs.forEach(function(g){var k=g[key]||'Sin categoría';m[k]=(m[k]||0)+Number(g.monto)});
-    var ks=Object.keys(m).sort(function(a,b){return m[b]-m[a]}),mx=ks.length?m[ks[0]]:1,h='';
-    ks.forEach(function(k){h+='<div class="bar"><div class="l"><span>'+esc(lab?lab(k):k)+'</span><span>S/ '+money(m[k])+'</span></div><div class="t"><div style="width:'+Math.max(3,m[k]/mx*100)+'%"></div></div></div>'});
-    $(id).innerHTML=h||'<div class="empty">Sin gastos este mes</div>';
+  $('m-sub').textContent=gs.length+(gs.length===1?' gasto':' gastos')+(st.per!=='dia'&&dias?' · promedio S/ '+money(tot/dias)+' por día con gasto':'');
+  var vacio='<div class="empty">Sin gastos en este periodo</div>';
+  // categorías: dona + leyenda
+  var mc={};gs.forEach(function(g){var k=g.categoria||'Sin categoría';mc[k]=(mc[k]||0)+Number(g.monto)});
+  var kc=Object.keys(mc).sort(function(a,b){return mc[b]-mc[a]});
+  if(!kc.length)$('m-cat').innerHTML=vacio;
+  else{
+    var ley='';kc.forEach(function(k){ley+='<div class="it"><span class="dot" style="background:'+colorCat(k)+'"></span><span class="n">'+esc(k)+'</span><span class="p">'+Math.round(mc[k]/tot*100)+'%</span><span class="v">S/ '+money(mc[k])+'</span></div>'});
+    $('m-cat').innerHTML='<div class="dona">'+dona(mc,kc,tot)+'<div class="ley">'+ley+'</div></div>';
   }
-  bars('m-cat','categoria');
-  bars('m-med','medio',function(k){var f=MEDIOS.filter(function(x){return x[0]===k})[0];return f?f[1]:k});
+  // medios: barras
+  var mm={};gs.forEach(function(g){var k=g.medio||'otro';mm[k]=(mm[k]||0)+Number(g.monto)});
+  var km=Object.keys(mm).sort(function(a,b){return mm[b]-mm[a]}),mx=km.length?mm[km[0]]:1,h='';
+  km.forEach(function(k){var f=MEDIOS.filter(function(x){return x[0]===k})[0];h+='<div class="bar"><div class="l"><span>'+esc(f?f[1]:k)+'</span><span>S/ '+money(mm[k])+'</span></div><div class="t"><div style="width:'+Math.max(3,mm[k]/mx*100)+'%"></div></div></div>'});
+  $('m-med').innerHTML=h||vacio;
 }
-$('m-prev').onclick=function(){st.mes=new Date(st.mes.getFullYear(),st.mes.getMonth()-1,1);drawRes()};
-$('m-next').onclick=function(){st.mes=new Date(st.mes.getFullYear(),st.mes.getMonth()+1,1);drawRes()};
+function mover(n){
+  var r=new Date(st.ref+'T12:00:00');
+  if(st.per==='dia')r.setDate(r.getDate()+n);
+  else if(st.per==='semana')r.setDate(r.getDate()+7*n);
+  else r=new Date(r.getFullYear(),r.getMonth()+n,1,12);
+  st.ref=dstr(r);drawRes();
+}
+$('m-prev').onclick=function(){mover(-1)};
+$('m-next').onclick=function(){mover(1)};
+document.querySelectorAll('.seg button').forEach(function(b){b.onclick=function(){st.per=b.getAttribute('data-per');st.ref=limaHoy();try{localStorage.setItem('per',st.per)}catch(e){}drawRes()}});
 function tab(t){$('v-hoy').classList.toggle('hide',t!=='hoy');$('v-res').classList.toggle('hide',t!=='res');$('n-hoy').classList.toggle('on',t==='hoy');$('n-res').classList.toggle('on',t==='res');$('h-t').textContent=t==='hoy'?'Hoy':'Gastado hoy'}
 $('n-hoy').onclick=function(){tab('hoy')};$('n-res').onclick=function(){tab('res');drawRes()};
 
