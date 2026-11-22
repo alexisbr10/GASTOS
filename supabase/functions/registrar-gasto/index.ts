@@ -31,6 +31,22 @@ const MESES: Record<string, number> = {
   enero: 1, febrero: 2, marzo: 3, abril: 4, mayo: 5, junio: 6, julio: 7, agosto: 8,
   septiembre: 9, setiembre: 9, octubre: 10, noviembre: 11, diciembre: 12,
 };
+const MES3: Record<string, number> = { ene: 1, feb: 2, mar: 3, abr: 4, may: 5, jun: 6, jul: 7, ago: 8, sep: 9, set: 9, oct: 10, nov: 11, dic: 12 };
+// "20 de noviembre de 2026 - 02:26 PM" · "03 noviembre 2026 - 07:35 p. m." · "16 Ene 2026 02:53 PM" · "14 de noviembre, 2026 16:19"
+function parseFecha(plano: string): Date | null {
+  const re = /(\d{1,2})\s+(?:de\s+)?([a-zA-Zé]{3,})\.?,?\s+(?:de\s+)?(\d{4})\s*[-–,]?\s*(?:a las\s+)?(\d{1,2}):(\d{2})(?::\d{2})?\s*(?:([AaPp])\.?\s*[Mm]\b\.?)?/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(plano))) {
+    const mes = MES3[m[2].toLowerCase().slice(0, 3)];
+    if (!mes) continue;
+    let h = parseInt(m[4]);
+    if (m[6]) { h = h % 12; if (m[6].toUpperCase() === "P") h += 12; }
+    const iso = `${m[3]}-${String(mes).padStart(2, "0")}-${m[1].padStart(2, "0")}T${String(h).padStart(2, "0")}:${m[5]}:00-05:00`;
+    const d = new Date(iso);
+    if (!isNaN(d.getTime())) return d;
+  }
+  return null;
+}
 const MON = "(?:S\\/\\.?|US\\$|USD|PEN|\\$)";
 
 // Lee el texto de un correo de alerta de consumo (formato BCP y genéricos).
@@ -44,7 +60,7 @@ function parseAviso(texto: string, asunto: string) {
     || plano.match(new RegExp("consumo de\\s*(" + MON + "\\s*[\\d.,]+)\\s*con (?:tu|su)\\s+(.+?)\\s+en\\s+(.+?)(?:\\.\\s+(?=Por|Para|Te |Si |Gracias)|\\.?\\s*$)", "i"));
   if (m1) { montoTxt = m1[1]; tarjeta = m1[2]; comercio = m1[3]; }
 
-  if (!montoTxt) {
+  if (!montoTxt && /consumo/i.test(plano)) {
     const m2 = plano.match(new RegExp("(?:total del consumo|monto|importe)\\s*:?\\s*(" + MON + "\\s*[\\d.,]+)", "i"))
       || plano.match(new RegExp("(" + MON + "\\s*\\d[\\d.,]*)", "i"));
     if (m2) montoTxt = m2[1];
@@ -62,16 +78,7 @@ function parseAviso(texto: string, asunto: string) {
   }
   if (last4) tarjeta = (tarjeta ? tarjeta + " " : "") + "•" + last4[1];
 
-  // "20 de noviembre de 2026 - 02:26 PM"
-  let cuando: Date | null = null;
-  const mf = plano.match(/(\d{1,2})\s+(?:de\s+)?([a-zé]+)\s+(?:de\s+)?(\d{4})\s*[-–,]?\s*(\d{1,2}):(\d{2})\s*([AP])\.?\s*M/i);
-  if (mf && MESES[mf[2].toLowerCase()]) {
-    let h = parseInt(mf[4]) % 12;
-    if (mf[6].toUpperCase() === "P") h += 12;
-    const iso = `${mf[3]}-${String(MESES[mf[2].toLowerCase()]).padStart(2, "0")}-${mf[1].padStart(2, "0")}T${String(h).padStart(2, "0")}:${mf[5]}:00-05:00`;
-    const d = new Date(iso);
-    if (!isNaN(d.getTime())) cuando = d;
-  }
+  const cuando = parseFecha(plano);
   const mo = plano.match(/n[uú]mero de operaci[oó]n\s*:?\s*(\d{4,})/i);
   const operacion = mo ? mo[1] : null;
   return { montoTxt, comercio: comercio.slice(0, 80), tarjeta: tarjeta.slice(0, 60), cuando, operacion };
@@ -91,12 +98,41 @@ function parseYape(texto: string, asunto: string) {
     || plano.match(/((?:S\/\.?|US\$)\s*\d[\d.,]*)/i);
   const mb = plano.match(/nombre del beneficiario\s*:?\s*(.+?)(?=\s*(?:N[º°o]\.?\s*de operaci|Celular|Fecha|\*Por tu|$))/i);
   const mo = plano.match(/N[º°o]\.?\s*de operaci[oó]n\s*:?\s*(\d{4,})/i);
-  const f = parseAviso(texto, asunto).cuando;
   return {
     montoTxt: mm ? (/[S$]/.test(mm[1]) ? mm[1] : "S/ " + mm[1]) : "",
     comercio: (mb ? mb[1].trim() : "Yape").slice(0, 80),
-    tarjeta: "", cuando: f,
+    tarjeta: "", cuando: parseFecha(plano),
     operacion: mo ? "Y" + mo[1] : null,
+  };
+}
+
+// Constancias de transferencia (Interbank, BBVA, Plin, etc.). Solo las que tú envías.
+function esTransferencia(texto: string, asunto: string) {
+  return /transferen|plineo|plin\b/i.test(asunto + " " + texto) && !/consumo de/i.test(texto);
+}
+function esIngreso(texto: string, asunto: string) {
+  return /te transfiri|recibiste una transferencia|te (?:han )?(?:enviado|depositado)|abono recibido|te plinearon|recibiste un plin/i.test(asunto + " " + texto);
+}
+function parseTransferencia(texto: string, asunto: string) {
+  const plano = (asunto + "\n" + texto).replace(/\u00a0/g, " ").replace(/\s+/g, " ");
+  let montoTxt = "";
+  const lab = plano.match(/(?:moneda y monto|monto (?:transferido|enviado|de la operaci[oó]n|del plineo)|importe(?: transferido| enviado)?|monto)\s*:?\s*((?:S\/\.?|US\$|\$)\s*[\d.,]+)/i);
+  if (lab && parseMonto(lab[1])) montoTxt = lab[1];
+  if (!montoTxt) {
+    const re = /(ITF|comisi[oó]n)?\s*:?\s*((?:S\/\.?|US\$)\s*\d[\d.,]*)/gi;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(plano))) { if (!m[1] && parseMonto(m[2])) { montoTxt = m[2]; break; } }
+  }
+  const md = plano.match(/(?:cuenta destino|destino|destinatario|beneficiario|nombre del (?:destinatario|beneficiario)|enviado a|para)\s*:?\s*(.+?)(?=\s+(?:\d{6,}|Moneda|Monto|Importe|Banco|ITF|Fecha|N[uú]mero|C[oó]digo|Cuenta|Celular|Origen|$))/i);
+  const mo = plano.match(/(?:n[uú]mero|c[oó]digo|n[º°o]\.?)\s*de\s*operaci[oó]n\s*:?\s*([A-Z0-9]{5,})/i);
+  const banco = (plano.match(/\b(interbank|bbva|scotiabank|bcp|banbif|pichincha)\b/i) || [])[1] || "";
+  const destino = md ? md[1].trim() : "";
+  return {
+    montoTxt,
+    comercio: ("Transf. " + (destino || banco.toUpperCase() || "")).trim().slice(0, 80),
+    tarjeta: ({ interbank: "Interbank", bbva: "BBVA", scotiabank: "Scotiabank", bcp: "BCP", banbif: "BanBif", pichincha: "Pichincha" } as Record<string, string>)[banco.toLowerCase()] || "",
+    cuando: parseFecha(plano),
+    operacion: mo ? "T" + mo[1].toUpperCase() : null,
   };
 }
 
@@ -127,10 +163,13 @@ Deno.serve(async (req: Request) => {
     const tx = String(b.texto), asu = String(b.asunto ?? "");
     if (esYapeRecibido(tx, asu)) return json({ ok: true, ignorado: "yape recibido" });
     const yape = esYape(tx, asu);
-    if (yape) medio = "yape";
-    const p = yape ? parseYape(tx, asu) : parseAviso(tx, asu);
+    const transf = !yape && esTransferencia(tx, asu);
+    if (transf && esIngreso(tx, asu)) return json({ ok: true, ignorado: "transferencia recibida" });
+    if (yape) medio = "yape"; else if (transf) medio = "transferencia";
+    const p = yape ? parseYape(tx, asu) : transf ? parseTransferencia(tx, asu) : parseAviso(tx, asu);
     console.log("correo", JSON.stringify({ asunto: String(b.asunto ?? "").slice(0, 120), monto: p.montoTxt, comercio: p.comercio, tarjeta: p.tarjeta, cuando: p.cuando, operacion: p.operacion }));
     montoIn = p.montoTxt; comercio = p.comercio; tarjeta = p.tarjeta || null; cuando = p.cuando; operacion = p.operacion;
+    if (!parseMonto(montoIn)) return json({ ok: true, ignorado: "sin monto de gasto" });
   } else {
     console.log("applepay", JSON.stringify({ monto: b.monto, comercio: b.comercio, tarjeta: b.tarjeta }));
   }
@@ -174,9 +213,9 @@ Deno.serve(async (req: Request) => {
     return json({ ok: true, duplicado: true });
   }
 
-  if (medio === "yape") {
+  if (medio === "yape" || medio === "transferencia") {
     const { data: man } = await sb.from("gastos").select("id,concepto,creado")
-      .eq("uid", uid).eq("monto", m.monto).eq("origen", "manual").eq("medio", "yape").eq("vinculado", false)
+      .eq("uid", uid).eq("monto", m.monto).eq("origen", "manual").eq("medio", medio).eq("vinculado", false)
       .gte("creado", new Date(ref.getTime() - 30 * 60_000).toISOString())
       .lte("creado", new Date(ref.getTime() + 30 * 60_000).toISOString()).limit(1);
     if (man && man.length) {
@@ -192,7 +231,7 @@ Deno.serve(async (req: Request) => {
     .filter((g) => g.origen === otra && g.medio === "tarjeta" && !g.vinculado && Math.abs(new Date(g.creado).getTime() - ref.getTime()) < 20 * 60_000)
     .sort((x, y) => (parecido(comercio, y.concepto) - parecido(comercio, x.concepto)) ||
       (Math.abs(new Date(x.creado).getTime() - ref.getTime()) - Math.abs(new Date(y.creado).getTime() - ref.getTime())))[0];
-  if (cand && medio !== "yape") {
+  if (cand && medio === "tarjeta") {
     const upd: Record<string, unknown> = { vinculado: true };
     if (esCorreo) {
       if (operacion) upd.operacion = operacion;
