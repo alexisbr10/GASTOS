@@ -45,6 +45,15 @@ function parseFecha(plano: string): Date | null {
     const d = new Date(iso);
     if (!isNaN(d.getTime())) return d;
   }
+  // "Fecha: 23/11/2026  Hora: 03:57 PM" (Interbank)
+  const fd = plano.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s*(?:hora\s*:?)?\s*(\d{1,2}):(\d{2})(?::\d{2})?\s*(?:([AaPp])\.?\s*[Mm]\b\.?)?)?/i);
+  if (fd) {
+    const hm = fd[4] ? fd : plano.match(/hora\s*:?\s*()()()(\d{1,2}):(\d{2})(?::\d{2})?\s*(?:([AaPp])\.?\s*[Mm]\b\.?)?/i);
+    let h = hm ? parseInt(hm[4]) : 12, mi = hm ? hm[5] : "00";
+    if (hm && hm[6]) { h = h % 12; if (hm[6].toUpperCase() === "P") h += 12; }
+    const d = new Date(`${fd[3]}-${fd[2].padStart(2, "0")}-${fd[1].padStart(2, "0")}T${String(h).padStart(2, "0")}:${mi}:00-05:00`);
+    if (!isNaN(d.getTime())) return d;
+  }
   return null;
 }
 const MON = "(?:S\\/\\.?|US\\$|USD|PEN|\\$)";
