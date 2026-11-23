@@ -151,6 +151,8 @@ Deno.serve(async (req: Request) => {
   const { data: at } = await sb.from("atajo").select("uid").eq("token", token).maybeSingle();
   if (!at) return json({ ok: false, error: "token" }, 401);
   const uid = at.uid as string;
+  const { data: per } = await sb.from("perfiles").select("estado").eq("uid", uid).maybeSingle();
+  if (!per || per.estado !== "aprobado") return json({ ok: false, error: "cuenta no aprobada" }, 403);
 
   const esCorreo = b.texto != null && String(b.texto).trim() !== "";
   let montoIn: unknown = b.monto, comercio = String(b.comercio ?? "").trim().slice(0, 80);

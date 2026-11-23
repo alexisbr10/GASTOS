@@ -76,7 +76,14 @@ nav button.on{color:var(--ink2);box-shadow:inset 0 3px 0 var(--mint)}
 .ley .p{color:var(--mut);font-size:13px;width:40px;text-align:right}
 .ley .v{font-weight:700;width:86px;text-align:right}
 #auth{max-width:380px;margin:0 auto;padding:calc(60px + env(safe-area-inset-top)) 20px}
-#auth img{width:72px;height:72px;border-radius:18px}
+#auth img,.pend-in img{width:72px;height:72px;border-radius:18px}
+.pend-in h1{font-size:28px;margin:14px 0 4px}.pend-in p{color:var(--mut)}
+.usr{display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid var(--line);font-size:14px;color:var(--tx);flex-wrap:wrap}
+.usr .em{flex:1;min-width:150px;font-weight:600;word-break:break-all}.usr .em small{display:block;word-break:normal;font-weight:400;color:var(--mut);font-size:12px}
+.usr .est{font-size:11px;font-weight:700;border-radius:6px;padding:2px 7px}
+.est.pendiente{background:#fff1cc;color:#8a5a00}.est.aprobado{background:#dff5ea;color:#0f5a3f}.est.bloqueado{background:#fde2df;color:#9b2c20}
+.usr button{border:1.5px solid var(--line);background:transparent;border-radius:9px;padding:6px 10px;font-weight:700;font-size:13px;cursor:pointer;color:var(--tx)}
+.usr button.ok{background:var(--mint);border-color:var(--mint);color:#06281f}
 #auth h1{font-size:28px;margin:14px 0 4px}
 #auth p{color:var(--mut);margin:0 0 10px}
 .err{color:var(--red);font-size:14px;margin-top:10px;min-height:18px}
@@ -115,6 +122,16 @@ code,.mono{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;background:
     <button class="btn" id="a-recgo">Guardar contraseña</button>
   </div>
   <div class="err" id="a-err"></div>
+</section>
+
+<section id="pend" class="hide">
+  <div class="pend-in" style="max-width:380px;margin:0 auto;padding:calc(60px + env(safe-area-inset-top)) 20px">
+    <img src="icons/icon-192.png?v=2" alt="">
+    <h1 id="pend-t">Cuenta pendiente</h1>
+    <p id="pend-p">Tu cuenta fue creada. La administradora debe aprobarla antes de que puedas registrar gastos.</p>
+    <button class="btn" id="pend-re">Volver a revisar</button>
+    <button class="btn sec" id="pend-out">Cerrar sesión</button>
+  </div>
 </section>
 
 <section id="app" class="hide">
@@ -162,6 +179,11 @@ code,.mono{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;background:
 <dialog id="d-set">
   <button class="x" data-close>✕</button>
   <h2>Ajustes</h2>
+  <div id="s-adm" class="hide">
+    <h3>Usuarios</h3>
+    <p>Aprueba las cuentas nuevas. No verás sus gastos: cada persona ve solo lo suyo.</p>
+    <div id="s-usr"><p>Cargando…</p></div>
+  </div>
   <h3>Apple Pay automático</h3>
   <p>Cada pago con tarjeta en Apple Pay se registra solo. Se configura una vez en el atajo de tu iPhone.</p>
   <button class="btn sec" id="s-tok">Generar clave del atajo</button>
@@ -206,7 +228,7 @@ function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return
 function toast(m){var t=$('toast');t.textContent=m;t.classList.add('on');setTimeout(function(){t.classList.remove('on')},1800)}
 function num(v){v=String(v).replace(',','.').replace(/[^\d.]/g,'');var n=parseFloat(v);return isFinite(n)?n:0}
 
-function show(which){$('auth').classList.toggle('hide',which!=='auth');$('app').classList.toggle('hide',which!=='app')}
+function show(which){$('auth').classList.toggle('hide',which!=='auth');$('app').classList.toggle('hide',which!=='app');$('pend').classList.toggle('hide',which!=='pend')}
 function chips(box,items,cur,cb,allowOff){box.innerHTML='';items.forEach(function(it){var b=document.createElement('button');b.type='button';b.className='chip'+(cur===it[0]?' on':'');b.textContent=it[1];b.onclick=function(){cb(allowOff&&cur===it[0]?'':it[0])};box.appendChild(b)})}
 function drawEntry(){
   chips($('f-medio'),MEDIOS,st.medio,function(v){st.medio=v||st.medio;try{localStorage.setItem('medio',st.medio)}catch(e){}drawEntry()});
@@ -218,8 +240,18 @@ var recovery=/type=recovery/.test(location.hash);
 async function boot(){
   if(recovery){$('a-form').classList.add('hide');$('a-rec').classList.remove('hide');$('auth-sub').textContent='Recupera tu acceso.';show('auth');return}
   var s=(await sb.auth.getSession()).data.session;
-  if(!s){$('auth-sub').textContent='Ingresa o crea tu cuenta. Tus gastos son solo tuyos.';show('auth');return}
-  st.uid=s.user.id;show('app');await cargar();suscribir();
+  if(!s){$('auth-sub').textContent='Ingresa o crea tu cuenta. Tus gastos son solo tuyos; las cuentas nuevas se activan cuando la administradora las aprueba.';show('auth');return}
+  st.uid=s.user.id;
+  var me=await sb.rpc('mi_estado');var e=(me.data&&me.data[0])||{};
+  st.admin=e.rol==='admin'&&e.estado==='aprobado';
+  if(e.estado!=='aprobado'){
+    var bloq=e.estado==='bloqueado';
+    $('pend-t').textContent=bloq?'Cuenta sin acceso':'Cuenta pendiente';
+    $('pend-p').textContent=bloq?'Tu cuenta no tiene acceso. Comunícate con la administradora.':'Tu cuenta ('+(s.user.email||'')+') fue creada. La administradora debe aprobarla antes de que puedas registrar gastos.';
+    $('pend-re').classList.toggle('hide',bloq);show('pend');return;
+  }
+  $('s-adm').classList.toggle('hide',!st.admin);
+  show('app');await cargar();suscribir();
 }
 $('a-go').onclick=async function(){
   $('a-err').style.color='';$('a-err').textContent='';
@@ -249,6 +281,8 @@ $('a-recgo').onclick=async function(){
 };
 $('a-pass').addEventListener('keydown',function(e){if(e.key==='Enter')$('a-go').click()});
 $('s-out').onclick=async function(){await sb.auth.signOut();location.reload()};
+$('pend-out').onclick=async function(){await sb.auth.signOut();location.reload()};
+$('pend-re').onclick=function(){boot()};
 
 /* ---------- datos ---------- */
 async function cargar(){
@@ -394,7 +428,32 @@ function drawSet(){
   $('s-regs').innerHTML=st.regs.map(function(r){return'<div class="mini"><span>'+esc(r.palabra)+' → '+esc(r.categoria)+'</span><button data-r="'+esc(r.palabra)+'" aria-label="Quitar">✕</button></div>'}).join('')||'<p>Sin reglas todavía.</p>';
   $('s-rc').innerHTML=st.cats.map(function(c){return'<option>'+esc(c)+'</option>'}).join('');
 }
-$('b-set').onclick=function(){drawSet();$('d-set').showModal()};
+$('b-set').onclick=function(){drawSet();$('d-set').showModal();if(st.admin)drawUsuarios()};
+async function drawUsuarios(){
+  var r=await sb.rpc('listar_usuarios');
+  if(r.error){$('s-usr').innerHTML='<p>No se pudo cargar: '+esc(r.error.message)+'</p>';return}
+  var u=r.data||[],pend=u.filter(function(x){return x.estado==='pendiente'}).length;
+  var f=function(t){return t?new Date(t).toLocaleDateString('es-PE',{day:'numeric',month:'short',year:'numeric'}):'nunca'};
+  var h='<p><b>'+u.length+'</b> '+(u.length===1?'usuario':'usuarios')+(pend?' · <b>'+pend+' pendiente'+(pend>1?'s':'')+'</b>':'')+'</p>';
+  u.forEach(function(x){
+    var yo=x.uid===st.uid,b='';
+    if(!yo){
+      if(x.estado!=='aprobado')b+='<button class="ok" data-u="'+x.uid+'" data-e="aprobado">Aprobar</button>';
+      if(x.estado!=='bloqueado')b+='<button data-u="'+x.uid+'" data-e="bloqueado">'+(x.estado==='pendiente'?'Rechazar':'Bloquear')+'</button>';
+    }
+    h+='<div class="usr"><span class="em">'+esc(x.email||'(sin correo)')+(yo?' (tú)':'')+'<small>Alta '+f(x.creado)+' · último ingreso '+f(x.ultimo_ingreso)+'</small></span><span class="est '+x.estado+'">'+x.estado+'</span>'+b+'</div>';
+  });
+  $('s-usr').innerHTML=h;
+}
+$('s-usr').onclick=async function(e){
+  var b=e.target.closest&&e.target.closest('button[data-u]');if(!b)return;
+  var est=b.getAttribute('data-e');
+  if(est==='bloqueado'&&!confirm('¿Quitar el acceso a esta cuenta?'))return;
+  b.disabled=true;
+  var r=await sb.rpc('cambiar_estado_usuario',{p_uid:b.getAttribute('data-u'),p_estado:est});
+  if(r.error){toast('Error: '+r.error.message);b.disabled=false;return}
+  toast(est==='aprobado'?'Usuario aprobado':'Acceso quitado');drawUsuarios();
+};
 $('s-cats').onclick=async function(e){var c=e.target.getAttribute&&e.target.getAttribute('data-c');if(!c)return;await sb.from('categorias').delete().eq('nombre',c);await cargar();drawSet()};
 $('s-regs').onclick=async function(e){var c=e.target.getAttribute&&e.target.getAttribute('data-r');if(!c)return;await sb.from('reglas').delete().eq('palabra',c);await cargar();drawSet()};
 $('s-addcat').onclick=async function(){var n=$('s-newcat').value.trim();if(!n)return;await sb.from('categorias').insert({uid:st.uid,nombre:n,orden:st.cats.length+1});$('s-newcat').value='';await cargar();drawSet()};
