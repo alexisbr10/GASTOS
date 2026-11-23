@@ -16,7 +16,7 @@ function parseMonto(v: unknown) {
   const raw = String(v ?? "").trim();
   if (!raw) return null;
   const usd = /us\s*\$|usd|d[oó]lar/i.test(raw) || (/\$/.test(raw) && !/s\/|pen|sol/i.test(raw));
-  let s = raw.replace(/[^0-9.,]/g, "");
+  let s = raw.replace(/[^0-9.,]/g, "").replace(/^[.,]+/, "").replace(/[.,]+$/, "");
   if (s.includes(",") && s.includes(".")) {
     s = s.lastIndexOf(",") > s.lastIndexOf(".") ? s.replace(/\./g, "").replace(",", ".") : s.replace(/,/g, "");
   } else if (s.includes(",")) {
@@ -73,7 +73,8 @@ function parseAviso(texto: string, asunto: string) {
 
   const last4 = plano.match(/\*{3,}\s*(\d{4})/);
   if (!tarjeta) {
-    const mt = plano.match(/tarjeta de (cr[eé]dito|d[eé]bito)(\s+\w+)?/i);
+    const mt = plano.match(/tarjeta de (cr[eé]dito|d[eé]bito)(\s+\w+)?/i)
+      || plano.match(/tarjeta\s+(?:interbank|bbva|bcp|scotiabank)(?:\s+(?:visa|mastercard|amex|american express))?(?:\s+(?:cl[aá]sica|oro|platinum|signature|infinite|black|d[eé]bito|cr[eé]dito))?/i);
     if (mt) tarjeta = mt[0];
   }
   if (last4) tarjeta = (tarjeta ? tarjeta + " " : "") + "•" + last4[1];
@@ -108,7 +109,8 @@ function parseYape(texto: string, asunto: string) {
 
 // Constancias de transferencia (Interbank, BBVA, Plin, etc.). Solo las que tú envías.
 function esTransferencia(texto: string, asunto: string) {
-  return /transferen|plineo|plin\b/i.test(asunto + " " + texto) && !/consumo de/i.test(texto);
+  const t = asunto + " " + texto;
+  return /transferen|plineo|plin\b/i.test(t) && !/consumo (?:de|con)|realizaste un consumo|compra con tu tarjeta/i.test(t);
 }
 function esIngreso(texto: string, asunto: string) {
   return /te transfiri|recibiste una transferencia|te (?:han )?(?:enviado|depositado)|abono recibido|te plinearon|recibiste un plin/i.test(asunto + " " + texto);
