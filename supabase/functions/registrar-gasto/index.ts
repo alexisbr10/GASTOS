@@ -137,7 +137,10 @@ function parseTransferencia(texto: string, asunto: string) {
   const md = plano.match(/(?:cuenta destino|destino|destinatario|beneficiario|nombre del (?:destinatario|beneficiario)|enviado a|para)\s*:?\s*(.+?)(?=\s+(?:\d{6,}|Moneda|Monto|Importe|Banco|ITF|Fecha|N[uú]mero|C[oó]digo|Cuenta|Celular|Origen|$))/i);
   const mo = plano.match(/(?:n[uú]mero|c[oó]digo|n[º°o]\.?)\s*de\s*operaci[oó]n\s*:?\s*([A-Z0-9]{5,})/i);
   const banco = (plano.match(/\b(interbank|bbva|scotiabank|bcp|banbif|pichincha)\b/i) || [])[1] || "";
-  const destino = md ? md[1].trim() : "";
+  let destino = md ? md[1].trim() : "";
+  // BBVA Plin: "Plineaste S/ 400.00 a Carlos A Chavez G"
+  const mp = plano.match(/plineaste\s+((?:S\/\.?|US\$|\$)\s*[\d.,]+)\s+a\s+(.+?)(?=\s+(?:Detalles|Celular|Destino|Fecha|N[uú]mero)|$)/i);
+  if (mp) { montoTxt = mp[1]; destino = "Plin " + mp[2].trim(); }
   return {
     montoTxt,
     comercio: ("Transf. " + (destino || banco.toUpperCase() || "")).trim().slice(0, 80),
