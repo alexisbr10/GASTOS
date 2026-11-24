@@ -165,7 +165,7 @@ Deno.serve(async (req: Request) => {
   const { data: at } = await sb.from("atajo").select("uid").eq("token", token).maybeSingle();
   if (!at) return json({ ok: false, error: "token" }, 401);
   const uid = at.uid as string;
-  const { data: per } = await sb.from("perfiles").select("estado").eq("uid", uid).maybeSingle();
+  const { data: per } = await sb.from("perfiles").select("estado,nombres_propios").eq("uid", uid).maybeSingle();
   if (!per || per.estado !== "aprobado") return json({ ok: false, error: "cuenta no aprobada" }, 403);
 
   const esCorreo = b.texto != null && String(b.texto).trim() !== "";
@@ -192,6 +192,11 @@ Deno.serve(async (req: Request) => {
 
   const m = parseMonto(montoIn);
   if (!m) return json({ ok: false, error: "monto" }, 400);
+
+  // movimientos a cuentas propias (yapeo/plin/transferencia a tu propio nombre): no son gasto
+  const norm = (x: string) => String(x || "").toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Z ]/g, " ").replace(/\s+/g, " ").trim();
+  const propios = ((per.nombres_propios as string[]) || []).map(norm).filter((x) => x.length >= 6);
+  if (propios.some((n) => norm(comercio).includes(n))) return json({ ok: true, ignorado: "cuenta propia" });
   const origen = esCorreo ? "correo" : "applepay";
 
   // categoría automática según el comercio (reglas de esa persona)
@@ -240,6 +245,17 @@ Deno.serve(async (req: Request) => {
       await sb.from("gastos").update(upd).eq("id", man[0].id);
       return json({ ok: true, duplicado: true, via: "manual" });
     }
+  }
+
+  // correo repetido sin N° de operación (mismo monto, comercio y hora)
+  if (esCorreo && cuando && lista.some((g) => g.origen === "correo" && g.concepto === comercio &&
+      Math.abs(new Date(g.creado).getTime() - cuando.getTime()) < 60_000)) {
+    return json({ ok: true, duplicado: true });
+  }
+  // correo de un pago con Apple Pay que ya fue vinculado antes
+  if (esCorreo && medio === "tarjeta" && lista.some((g) => g.origen === "applepay" && g.vinculado &&
+      parecido(comercio, g.concepto) > 0 && Math.abs(new Date(g.creado).getTime() - ref.getTime()) < 20 * 60_000)) {
+    return json({ ok: true, duplicado: true, via: "applepay" });
   }
 
   const otra = esCorreo ? "applepay" : "correo";

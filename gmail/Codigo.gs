@@ -59,6 +59,25 @@ function instalar() {
   console.log('Listo: ' + ids.length + ' correos existentes marcados como vistos. Revisando cada minuto.');
 }
 
+// Envía una vez los correos de los últimos N días (por defecto 2) aunque ya estén marcados como vistos.
+// El servidor descarta los repetidos y los movimientos a tus propias cuentas.
+function recuperar(dias) {
+  dias = dias || 2;
+  const props = PropertiesService.getScriptProperties();
+  const vistos = new Set(JSON.parse(props.getProperty('hechos') || '[]'));
+  GmailApp.search('from:(' + REMITENTES.join(' OR ') + ') newer_than:' + dias + 'd', 0, 100).forEach(function (h) {
+    h.getMessages().forEach(function (msg) {
+      const r = UrlFetchApp.fetch(URL_GASTOS, {
+        method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+        payload: JSON.stringify({ token: TOKEN, texto: msg.getPlainBody(), asunto: msg.getSubject() }),
+      });
+      console.log(msg.getDate() + ' · ' + msg.getSubject() + ' → ' + r.getContentText());
+      vistos.add(msg.getId());
+    });
+  });
+  props.setProperty('hechos', JSON.stringify(Array.from(vistos).slice(-500)));
+}
+
 function desinstalar() {
   ScriptApp.getProjectTriggers().forEach(function (t) { ScriptApp.deleteTrigger(t); });
   console.log('Revisión automática desactivada.');
