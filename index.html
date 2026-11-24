@@ -26,7 +26,9 @@ header{background:var(--ink);color:#fff;padding:calc(14px + env(safe-area-inset-
 header .t{font-size:13px;opacity:.75;font-weight:500}
 header .big{font-size:38px;font-weight:800;letter-spacing:-.02em;line-height:1.1;margin-top:2px}
 header .big small{font-size:18px;font-weight:600;opacity:.7;margin-right:4px}
-.gear{background:rgba(255,255,255,.12);border:0;color:#fff;width:40px;height:40px;border-radius:12px;font-size:20px;cursor:pointer}
+.gear{background:rgba(255,255,255,.12);border:0;color:#fff;width:40px;height:40px;border-radius:12px;font-size:20px;cursor:pointer;display:grid;place-items:center}
+.gear.gira svg{animation:gira .8s linear infinite}
+@keyframes gira{to{transform:rotate(360deg)}}
 main{max-width:560px;margin:-52px auto 0;padding:0 14px}
 .card{background:var(--card);border-radius:var(--r);padding:16px;box-shadow:0 1px 2px rgba(15,61,51,.08),0 8px 24px -12px rgba(15,61,51,.25);margin-bottom:14px}
 .amt{display:flex;align-items:baseline;gap:8px;border-bottom:2px solid var(--line);padding-bottom:6px}
@@ -138,7 +140,7 @@ code,.mono{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;background:
 <section id="app" class="hide">
   <header>
     <div><div class="t" id="h-t">Hoy</div><div class="big"><small>S/</small><span id="h-tot">0.00</span></div></div>
-    <button class="gear" id="b-set" aria-label="Ajustes">⚙</button>
+    <div style="display:flex;gap:8px"><button class="gear" id="b-ref" aria-label="Actualizar" title="Actualizar"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg></button><button class="gear" id="b-set" aria-label="Ajustes">⚙</button></div>
   </header>
   <main>
     <div id="v-hoy">
@@ -477,7 +479,21 @@ $('s-tok').onclick=async function(){
 };
 document.querySelectorAll('[data-close]').forEach(function(b){b.onclick=function(){b.closest('dialog').close()}});
 
-if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(function(){});
+var swReg=null;
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').then(function(r){swReg=r}).catch(function(){});
+var refrescando=false;
+async function refrescar(aviso){
+  if(refrescando||$('app').classList.contains('hide'))return;
+  refrescando=true;var b=$('b-ref');b.classList.add('gira');
+  try{await cargar();if(st.admin&&$('d-set').open)drawUsuarios();if(swReg)swReg.update().catch(function(){});if(aviso)toast('Actualizado')}
+  catch(e){if(aviso)toast('Sin conexión')}
+  b.classList.remove('gira');refrescando=false;
+}
+$('b-ref').onclick=function(){refrescar(true)};
+// al volver a la app y cada minuto mientras está abierta
+document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible')refrescar(false)});
+window.addEventListener('focus',function(){refrescar(false)});
+setInterval(function(){if(document.visibilityState==='visible')refrescar(false)},60000);
 boot();
 })();
 </script>
