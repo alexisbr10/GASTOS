@@ -289,14 +289,23 @@ $('pend-out').onclick=async function(){await sb.auth.signOut();location.reload()
 $('pend-re').onclick=function(){boot()};
 
 /* ---------- datos ---------- */
+// Trae TODOS los gastos de la cuenta (desde el primero), de 1000 en 1000.
+async function todosLosGastos(){
+  var out=[],n=1000;
+  for(var i=0;;i+=n){
+    var r=await sb.from('gastos').select('*').order('fecha',{ascending:false}).order('creado',{ascending:false}).order('id').range(i,i+n-1);
+    if(r.error||!r.data)break;
+    out=out.concat(r.data);if(r.data.length<n)break;
+  }
+  return out;
+}
 async function cargar(){
-  var desde=new Date(Date.now()-400*864e5).toISOString().slice(0,10);
   var q=await Promise.all([
-    sb.from('gastos').select('*').gte('fecha',desde).order('fecha',{ascending:false}).order('creado',{ascending:false}).limit(2000),
+    todosLosGastos(),
     sb.from('categorias').select('*').order('orden'),
     sb.from('reglas').select('*').order('palabra')
   ]);
-  st.gastos=q[0].data||[];st.cats=(q[1].data||[]).map(function(c){return c.nombre});st.regs=q[2].data||[];
+  st.gastos=q[0]||[];st.cats=(q[1].data||[]).map(function(c){return c.nombre});st.regs=q[2].data||[];
   drawEntry();drawLista();drawRes();
 }
 var rt=null;

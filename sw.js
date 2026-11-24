@@ -1,4 +1,4 @@
-var V='gastos-v4';
+var V='gastos-v5';
 var BASE=['./','index.html','config.js','manifest.webmanifest','icons/icon-192.png'];
 self.addEventListener('install',function(e){e.waitUntil(caches.open(V).then(function(c){return c.addAll(BASE)}).then(function(){return self.skipWaiting()}))});
 self.addEventListener('activate',function(e){e.waitUntil(caches.keys().then(function(ks){return Promise.all(ks.filter(function(k){return k!==V}).map(function(k){return caches.delete(k)}))}).then(function(){return self.clients.claim()}))});
