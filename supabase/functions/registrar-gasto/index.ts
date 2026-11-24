@@ -69,8 +69,8 @@ function parseAviso(texto: string, asunto: string) {
     || plano.match(new RegExp("consumo de\\s*(" + MON + "\\s*[\\d.,]+)\\s*con (?:tu|su)\\s+(.+?)\\s+en\\s+(.+?)(?:\\.\\s+(?=Por|Para|Te |Si |Gracias)|\\.?\\s*$)", "i"));
   if (m1) { montoTxt = m1[1]; tarjeta = m1[2]; comercio = m1[3]; }
 
-  if (!montoTxt && /consumo/i.test(plano)) {
-    const m2 = plano.match(new RegExp("(?:total del consumo|monto|importe)\\s*:?\\s*(" + MON + "\\s*[\\d.,]+)", "i"))
+  if (!montoTxt && /consumo|pago de servicio|constancia de pago|pagaste/i.test(plano)) {
+    const m2 = plano.match(new RegExp("(?:total del consumo|monto total|total pagado|monto pagado|importe pagado|total|monto|importe)\\s*:?\\s*\\*?(" + MON + "\\s*[\\d.,]+)", "i"))
       || plano.match(new RegExp("(" + MON + "\\s*\\d[\\d.,]*)", "i"));
     if (m2) montoTxt = m2[1];
   }
@@ -78,7 +78,7 @@ function parseAviso(texto: string, asunto: string) {
     const m3 = t.match(/(?:empresa|comercio|establecimiento)\s*:?\s*\n?\s*([^\n]{2,60})/i);
     if (m3) comercio = m3[1].trim();
   }
-  comercio = comercio.replace(/\s+(N[uú]mero|Fecha|Operaci[oó]n|Monto|Importe|Tarjeta)\b.*$/i, "").replace(/[.\s]+$/, "").trim();
+  comercio = comercio.replace(/\*/g, " ").replace(/\s+(N[uú]mero|Fecha|Operaci[oó]n|Monto|Importe|Tarjeta|Servicio|C[oó]digo|Suministro)\b.*$/i, "").replace(/[.\s]+$/, "").trim();
 
   const last4 = plano.match(/\*{3,}\s*(\d{4})/);
   if (!tarjeta) {
@@ -192,6 +192,7 @@ Deno.serve(async (req: Request) => {
 
   const m = parseMonto(montoIn);
   if (!m) return json({ ok: false, error: "monto" }, 400);
+  comercio = comercio.replace(/\*/g, " ").replace(/\s+/g, " ").trim();
 
   // movimientos a cuentas propias (yapeo/plin/transferencia a tu propio nombre): no son gasto
   const norm = (x: string) => String(x || "").toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Z ]/g, " ").replace(/\s+/g, " ").trim();
