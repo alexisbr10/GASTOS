@@ -166,8 +166,10 @@ Deno.serve(async (req: Request) => {
   const { data: at } = await sb.from("atajo").select("uid").eq("token", token).maybeSingle();
   if (!at) return json({ ok: false, error: "token" }, 401);
   const uid = at.uid as string;
-  const { data: per } = await sb.from("perfiles").select("estado,nombres_propios").eq("uid", uid).maybeSingle();
+  const { data: per } = await sb.from("perfiles").select("estado,nombres_propios,email").eq("uid", uid).maybeSingle();
   if (!per || per.estado !== "aprobado") return json({ ok: false, error: "cuenta no aprobada" }, 403);
+  // Reglas personales de Alexis (no aplican a otros usuarios): ignorar "Entre mis cuentas" y nombrar pagos de tarjeta.
+  const esAlexis = String(per.email ?? "").toLowerCase() === "alexisbr10@gmail.com";
 
   const esCorreo = b.texto != null && String(b.texto).trim() !== "";
   let montoIn: unknown = b.monto, comercio = String(b.comercio ?? "").trim().slice(0, 80);
@@ -179,16 +181,16 @@ Deno.serve(async (req: Request) => {
   if (esCorreo) {
     const tx = String(b.texto), asu = String(b.asunto ?? "");
     if (esYapeRecibido(tx, asu)) return json({ ok: true, ignorado: "yape recibido" });
-    if (/entre mis cuentas/i.test(asu + " " + tx)) return json({ ok: true, ignorado: "cuenta propia" });
+    if (esAlexis && /entre mis cuentas/i.test(asu + " " + tx)) return json({ ok: true, ignorado: "cuenta propia" });
     const yape = esYape(tx, asu);
     const transf = !yape && esTransferencia(tx, asu);
     if (transf && esIngreso(tx, asu)) return json({ ok: true, ignorado: "transferencia recibida" });
     if (yape) medio = "yape"; else if (transf) medio = "transferencia";
     const p = yape ? parseYape(tx, asu) : transf ? parseTransferencia(tx, asu) : parseAviso(tx, asu);
     montoIn = p.montoTxt; comercio = p.comercio; tarjeta = p.tarjeta || null; cuando = p.cuando; operacion = p.operacion;
-    // Pago de una tarjeta de crédito (BCP "Pago de Tarjeta de Crédito Propia", Interbank "Constancia de pago"):
+    // (solo Alexis) Pago de una tarjeta de crédito (BCP "Pago de Tarjeta de Crédito Propia", Interbank "Constancia de pago"):
     // se nombra "Pago tarjeta •1234" para que la regla "pago tarjeta" le ponga su categoría.
-    if (!comercio && /pago de tarjeta|constancia de pago(?!\s+de\s+servicio)/i.test(asu) && /tarjeta/i.test(tarjeta || "")) {
+    if (esAlexis && !comercio && /pago de tarjeta|constancia de pago(?!\s+de\s+servicio)/i.test(asu) && /tarjeta/i.test(tarjeta || "")) {
       comercio = ("Pago tarjeta " + ((tarjeta || "").match(/•\d{4}/) || [""])[0]).trim();
     }
     // Si el texto no trae fecha, se usa la hora en que llegó el correo (la envía el script de Gmail).
