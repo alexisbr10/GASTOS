@@ -89,7 +89,7 @@ function parseAviso(texto: string, asunto: string) {
   if (last4) tarjeta = (tarjeta ? tarjeta + " " : "") + "•" + last4[1];
 
   const cuando = parseFecha(plano);
-  const mo = plano.match(/n[uú]mero de operaci[oó]n\s*:?\s*(\d{4,})/i);
+  const mo = plano.match(/n[uú]mero de operaci[oó]n\s*:?\s*\*?\s*(\d{4,})/i);
   const operacion = mo ? mo[1] : null;
   return { montoTxt, comercio: comercio.slice(0, 80), tarjeta: tarjeta.slice(0, 60), cuando, operacion };
 }
