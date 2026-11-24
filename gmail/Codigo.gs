@@ -31,7 +31,7 @@ function revisarCorreos() {
         r = UrlFetchApp.fetch(URL_GASTOS, {
           method: 'post',
           contentType: 'application/json',
-          payload: JSON.stringify({ token: TOKEN, texto: msg.getPlainBody(), asunto: msg.getSubject() }),
+          payload: JSON.stringify({ token: TOKEN, texto: msg.getPlainBody(), asunto: msg.getSubject(), fecha_correo: msg.getDate().toISOString() }),
           muteHttpExceptions: true,
         });
       } catch (e) {
@@ -69,13 +69,67 @@ function recuperar(dias) {
     h.getMessages().forEach(function (msg) {
       const r = UrlFetchApp.fetch(URL_GASTOS, {
         method: 'post', contentType: 'application/json', muteHttpExceptions: true,
-        payload: JSON.stringify({ token: TOKEN, texto: msg.getPlainBody(), asunto: msg.getSubject() }),
+        payload: JSON.stringify({ token: TOKEN, texto: msg.getPlainBody(), asunto: msg.getSubject(), fecha_correo: msg.getDate().toISOString() }),
       });
       console.log(msg.getDate() + ' · ' + msg.getSubject() + ' → ' + r.getContentText());
       vistos.add(msg.getId());
     });
   });
   props.setProperty('hechos', JSON.stringify(Array.from(vistos).slice(-500)));
+}
+
+// Carga TODOS los correos del mes en curso (desde el día 1). Ejecútala una vez con ▶ Ejecutar.
+// Si el mes tiene muchos correos y Google corta a los ~5 minutos, vuelve a ejecutarla: continúa
+// donde quedó. El servidor descarta los repetidos y los movimientos a tus propias cuentas.
+function recuperarMes() {
+  const hoy = new Date();
+  recuperarDesde(new Date(hoy.getFullYear(), hoy.getMonth(), 1));
+}
+
+function recuperarDesde(inicio) {
+  const t0 = Date.now();
+  const props = PropertiesService.getScriptProperties();
+  const vistos = new Set(JSON.parse(props.getProperty('hechos') || '[]'));
+  const ayer = new Date(inicio.getTime() - 86400000);
+  const q = 'from:(' + REMITENTES.join(' OR ') + ') after:' +
+    Utilities.formatDate(ayer, Session.getScriptTimeZone(), 'yyyy/MM/dd');
+  const clave = 'recuperado_' + Utilities.formatDate(inicio, Session.getScriptTimeZone(), 'yyyyMMdd');
+  const listos = new Set(JSON.parse(props.getProperty(clave) || '[]'));
+  const cuenta = { guardados: 0, repetidos: 0, ignorados: 0, errores: 0 };
+  let pendientes = false;
+
+  for (let start = 0; ; start += 100) {
+    const hilos = GmailApp.search(q, start, 100);
+    hilos.forEach(function (h) {
+      h.getMessages().forEach(function (msg) {
+        const id = msg.getId();
+        if (msg.getDate() < inicio || listos.has(id)) return;
+        if (Date.now() - t0 > 5 * 60 * 1000) { pendientes = true; return; }
+        let txt = '';
+        try {
+          const r = UrlFetchApp.fetch(URL_GASTOS, {
+            method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+            payload: JSON.stringify({ token: TOKEN, texto: msg.getPlainBody(), asunto: msg.getSubject(), fecha_correo: msg.getDate().toISOString() }),
+          });
+          txt = r.getContentText();
+          if (r.getResponseCode() >= 500) { cuenta.errores++; pendientes = true; return; }
+        } catch (e) { cuenta.errores++; pendientes = true; return; }
+        if (/"duplicado":true/.test(txt)) cuenta.repetidos++;
+        else if (/"ignorado"/.test(txt)) cuenta.ignorados++;
+        else if (/"ok":true/.test(txt)) cuenta.guardados++;
+        else cuenta.errores++;
+        console.log(msg.getDate() + ' · ' + msg.getSubject() + ' → ' + txt);
+        listos.add(id); vistos.add(id);
+      });
+    });
+    if (hilos.length < 100 || pendientes) break;
+  }
+
+  props.setProperty(clave, JSON.stringify(Array.from(listos)));
+  props.setProperty('hechos', JSON.stringify(Array.from(vistos).slice(-500)));
+  console.log('Nuevos: ' + cuenta.guardados + ' · ya estaban: ' + cuenta.repetidos +
+    ' · no eran gasto: ' + cuenta.ignorados + ' · con error: ' + cuenta.errores);
+  console.log(pendientes ? 'Faltan correos: vuelve a ejecutar recuperarMes.' : 'Listo: mes completo.');
 }
 
 function desinstalar() {

@@ -1,9 +1,10 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-// Recibe gastos automáticos de dos fuentes (cada persona se identifica con su token, tabla `atajo`):
+// Recibe gastos automáticos (cada persona se identifica con su token, tabla `atajo`):
 //  - Apple Pay (automatización Wallet):   { token, monto, comercio, tarjeta }
-//  - Correo de alerta del banco (Mail):   { token, texto, asunto }
-// Solo crea gastos de esa persona. Evita duplicar el mismo pago que llega por las dos vías.
+//  - Correos (script de Gmail): consumos, pagos de servicio, Yape, Plin y transferencias:
+//      { token, texto, asunto, fecha_correo? }  (fecha_correo = hora de llegada, se usa si el texto no trae fecha)
+// Solo crea gastos de esa persona (y solo si su cuenta está aprobada).
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "content-type",
@@ -60,7 +61,7 @@ const MON = "(?:S\\/\\.?|US\\$|USD|PEN|\\$)";
 
 // Lee el texto de un correo de alerta de consumo (formato BCP y genéricos).
 function parseAviso(texto: string, asunto: string) {
-  const t = (asunto + "\n" + texto).replace(/ /g, " ");
+  const t = (asunto + "\n" + texto).replace(/\u00a0/g, " ");
   const plano = t.replace(/\s+/g, " ");
   let montoTxt = "", comercio = "", tarjeta = "";
 
@@ -178,13 +179,24 @@ Deno.serve(async (req: Request) => {
   if (esCorreo) {
     const tx = String(b.texto), asu = String(b.asunto ?? "");
     if (esYapeRecibido(tx, asu)) return json({ ok: true, ignorado: "yape recibido" });
+    if (/entre mis cuentas/i.test(asu + " " + tx)) return json({ ok: true, ignorado: "cuenta propia" });
     const yape = esYape(tx, asu);
     const transf = !yape && esTransferencia(tx, asu);
     if (transf && esIngreso(tx, asu)) return json({ ok: true, ignorado: "transferencia recibida" });
     if (yape) medio = "yape"; else if (transf) medio = "transferencia";
     const p = yape ? parseYape(tx, asu) : transf ? parseTransferencia(tx, asu) : parseAviso(tx, asu);
-    console.log("correo", JSON.stringify({ asunto: String(b.asunto ?? "").slice(0, 120), monto: p.montoTxt, comercio: p.comercio, tarjeta: p.tarjeta, cuando: p.cuando, operacion: p.operacion }));
     montoIn = p.montoTxt; comercio = p.comercio; tarjeta = p.tarjeta || null; cuando = p.cuando; operacion = p.operacion;
+    // Pago de una tarjeta de crédito (BCP "Pago de Tarjeta de Crédito Propia", Interbank "Constancia de pago"):
+    // se nombra "Pago tarjeta •1234" para que la regla "pago tarjeta" le ponga su categoría.
+    if (!comercio && /pago de tarjeta|constancia de pago(?!\s+de\s+servicio)/i.test(asu) && /tarjeta/i.test(tarjeta || "")) {
+      comercio = ("Pago tarjeta " + ((tarjeta || "").match(/•\d{4}/) || [""])[0]).trim();
+    }
+    // Si el texto no trae fecha, se usa la hora en que llegó el correo (la envía el script de Gmail).
+    if (!cuando && b.fecha_correo) {
+      const fc = new Date(String(b.fecha_correo));
+      if (!isNaN(fc.getTime()) && fc.getTime() <= Date.now() + 5 * 60_000) cuando = fc;
+    }
+    console.log("correo", JSON.stringify({ asunto: asu.slice(0, 120), medio, monto: p.montoTxt, comercio: p.comercio, tarjeta: p.tarjeta, cuando, operacion: p.operacion }));
     if (!parseMonto(montoIn)) return json({ ok: true, ignorado: "sin monto de gasto" });
   } else {
     console.log("applepay", JSON.stringify({ monto: b.monto, comercio: b.comercio, tarjeta: b.tarjeta }));
@@ -284,5 +296,5 @@ Deno.serve(async (req: Request) => {
   }
   const { error } = await sb.from("gastos").insert(fila);
   if (error) { console.log("error guardar", error.message); return json({ ok: false, error: "guardar" }, 500); }
-  return json({ ok: true, origen, monto: m.monto, comercio, categoria });
+  return json({ ok: true, origen, medio, monto: m.monto, comercio, categoria });
 });
