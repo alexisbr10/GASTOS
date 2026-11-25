@@ -170,6 +170,9 @@ Deno.serve(async (req: Request) => {
   if (!per || per.estado !== "aprobado") return json({ ok: false, error: "cuenta no aprobada" }, 403);
   // Reglas personales de Alexis (no aplican a otros usuarios): ignorar "Entre mis cuentas" y nombrar pagos de tarjeta.
   const esAlexis = String(per.email ?? "").toLowerCase() === "alexisbr10@gmail.com";
+  // Cuentas que por correo solo registran yapeos enviados (Apple Pay sí se registra normal).
+  const SOLO_YAPE = ["sulay0908@hotmail.com"];
+  const soloYape = SOLO_YAPE.includes(String(per.email ?? "").toLowerCase());
 
   const esCorreo = b.texto != null && String(b.texto).trim() !== "";
   let montoIn: unknown = b.monto, comercio = String(b.comercio ?? "").trim().slice(0, 80);
@@ -183,6 +186,7 @@ Deno.serve(async (req: Request) => {
     if (esYapeRecibido(tx, asu)) return json({ ok: true, ignorado: "yape recibido" });
     if (esAlexis && /entre mis cuentas/i.test(asu + " " + tx)) return json({ ok: true, ignorado: "cuenta propia" });
     const yape = esYape(tx, asu);
+    if (soloYape && !yape) return json({ ok: true, ignorado: "solo yape" });
     const transf = !yape && esTransferencia(tx, asu);
     if (transf && esIngreso(tx, asu)) return json({ ok: true, ignorado: "transferencia recibida" });
     if (yape) medio = "yape"; else if (transf) medio = "transferencia";
