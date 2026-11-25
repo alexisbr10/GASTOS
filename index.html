@@ -175,7 +175,7 @@ code,.mono{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;background:
   <div class="amt" style="margin-top:10px"><span>S/</span><input id="e-monto" inputmode="decimal"></div>
   <div class="chips" id="e-medio"></div>
   <input class="txt" id="e-concepto" placeholder="Concepto">
-  <div class="chips" id="e-cat"></div>
+  <div class="cbox"><input class="txt" id="e-catq" placeholder="Categoría (opcional)" autocomplete="off" autocorrect="off"><div class="cdrop hide" id="e-catl"></div></div>
   <label class="chk hide" id="e-reg-w"><input type="checkbox" id="e-reg"> <span id="e-reg-t"></span></label>
   <button class="btn" id="e-save">Guardar cambios</button>
   <button class="btn del" id="e-del">Eliminar</button>
@@ -253,35 +253,41 @@ function ordenCats(txt){
   pri=pri.filter(function(c){return st.cats.indexOf(c)>=0});
   return pri.concat(st.cats.filter(function(c){return pri.indexOf(c)<0}));
 }
-function abrirCats(){
-  var q=$('f-catq').value,nq=normTxt(q),box=$('f-catl');box.innerHTML='';
-  var lista=ordenCats($('f-concepto').value);
-  if(nq&&nq!==normTxt(st.cat))lista=lista.filter(function(c){return normTxt(c).indexOf(nq)>=0});
-  lista.forEach(function(c){
-    var b=document.createElement('button');b.type='button';b.textContent=c;if(c===st.cat)b.className='on';
-    b.addEventListener('pointerdown',function(e){e.preventDefault();elegirCat(c)});box.appendChild(b);
-  });
-  if(q.trim()&&!st.cats.some(function(c){return normTxt(c)===nq})){
-    var n=document.createElement('button');n.type='button';n.className='new';n.textContent='+ Crear categoría «'+q.trim()+'»';
-    n.addEventListener('pointerdown',async function(e){e.preventDefault();var nom=q.trim();
-      var r=await sb.from('categorias').insert({uid:st.uid,nombre:nom,orden:st.cats.length+1});
-      if(r.error){toast('No se pudo crear');return}
-      st.cats.push(nom);elegirCat(nom);toast('Categoría creada');});
-    box.appendChild(n);
+// Campo de categoría con lista desplegable y búsqueda. o = {q, l, get, set, concepto}
+function catBox(o){
+  var q=$(o.q),box=$(o.l);
+  function abrir(){
+    var nq=normTxt(q.value);box.innerHTML='';
+    var lista=ordenCats(o.concepto());
+    if(nq&&nq!==normTxt(o.get())){lista=lista.filter(function(c){return normTxt(c).indexOf(nq)>=0});
+      lista=lista.filter(function(c){return normTxt(c).indexOf(nq)===0}).concat(lista.filter(function(c){return normTxt(c).indexOf(nq)>0}))}
+    lista.forEach(function(c){
+      var b=document.createElement('button');b.type='button';b.textContent=c;if(c===o.get())b.className='on';
+      b.addEventListener('pointerdown',function(e){e.preventDefault();elegir(c)});box.appendChild(b);
+    });
+    var txt=q.value.trim();
+    if(txt&&!st.cats.some(function(c){return normTxt(c)===nq})){
+      var n=document.createElement('button');n.type='button';n.className='new';n.textContent='+ Crear categoría «'+txt+'»';
+      n.addEventListener('pointerdown',async function(e){e.preventDefault();
+        var r=await sb.from('categorias').insert({uid:st.uid,nombre:txt,orden:st.cats.length+1});
+        if(r.error){toast('No se pudo crear');return}
+        st.cats.push(txt);elegir(txt);toast('Categoría creada');});
+      box.appendChild(n);
+    }
+    box.classList.toggle('hide',!box.children.length);
   }
-  box.classList.toggle('hide',!box.children.length);
+  function elegir(c){o.set(c);q.value=c;box.classList.add('hide');q.blur()}
+  q.addEventListener('focus',function(){q.select();abrir()});
+  q.addEventListener('input',function(){if(!q.value.trim())o.set('');abrir()});
+  q.addEventListener('blur',function(){setTimeout(function(){
+    box.classList.add('hide');
+    var v=normTxt(q.value),hit=st.cats.filter(function(c){return normTxt(c)===v})[0];
+    if(!v)o.set('');else if(hit)o.set(hit);
+    q.value=o.get()||'';
+  },150)});
 }
-function elegirCat(c){st.cat=c;$('f-catq').value=c;$('f-catl').classList.add('hide');$('f-catq').blur()}
-$('f-catq').addEventListener('focus',function(){$('f-catq').select();abrirCats()});
-$('f-catq').addEventListener('input',function(){if(!$('f-catq').value.trim())st.cat='';abrirCats()});
-$('f-catq').addEventListener('blur',function(){
-  setTimeout(function(){
-    $('f-catl').classList.add('hide');
-    var v=normTxt($('f-catq').value),hit=st.cats.filter(function(c){return normTxt(c)===v})[0];
-    if(!v)st.cat='';else if(hit)st.cat=hit;
-    $('f-catq').value=st.cat||'';
-  },150);
-});
+catBox({q:'f-catq',l:'f-catl',get:function(){return st.cat},set:function(c){st.cat=c},concepto:function(){return $('f-concepto').value}});
+catBox({q:'e-catq',l:'e-catl',get:function(){return st.ecat},set:function(c){st.ecat=c;drawEdit()},concepto:function(){return $('e-concepto').value}});
 
 /* ---------- auth ---------- */
 var recovery=/type=recovery/.test(location.hash);
@@ -404,7 +410,7 @@ function drawEdit(){
   $('e-del').classList.toggle('hide',auto);$('e-auto').classList.toggle('hide',!auto);
   $('e-tit').textContent=auto?'Detalle del gasto':'Editar gasto';$('e-save').textContent=auto?'Guardar categoría':'Guardar cambios';
   chips($('e-medio'),MEDIOS.concat([['otro','Otro']]),st.emedio,function(v){st.emedio=v||st.emedio;drawEdit()});
-  chips($('e-cat'),st.cats.map(function(c){return[c,c]}),st.ecat,function(v){st.ecat=v;drawEdit()},true);
+  if(document.activeElement!==$('e-catq'))$('e-catq').value=st.ecat||'';
   var g=st.edit,w=$('e-reg-w');
   if(g&&g.origen&&g.origen!=='manual'&&g.concepto&&st.ecat){w.classList.remove('hide');$('e-reg-t').textContent='Recordar: “'+g.concepto.toLowerCase().slice(0,30)+'” → '+st.ecat}else w.classList.add('hide');
 }
