@@ -108,6 +108,11 @@ code,.mono{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;background:
 .toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:var(--ink);color:#fff;padding:11px 18px;border-radius:12px;font-weight:600;z-index:20;opacity:0;pointer-events:none;transition:opacity .2s}
 .toast.on{opacity:1}
 .x{float:right;border:0;background:var(--bg);width:32px;height:32px;border-radius:10px;cursor:pointer;font-size:16px}
+.grp{border-top:1px solid var(--line);margin-top:14px}.grp>summary{list-style:none;cursor:pointer;font-weight:700;font-size:15px;padding:14px 0 8px;display:flex;align-items:center;gap:8px}
+.grp>summary::-webkit-details-marker,.sub>summary::-webkit-details-marker{display:none}
+.grp>summary::after,.sub>summary::after{content:'▾';margin-left:auto;color:var(--mut)}.grp[open]>summary::after,.sub[open]>summary::after{content:'▴'}
+.cnt{font-weight:600;color:var(--mut);font-size:13px}
+.sub{border-bottom:1px solid var(--line)}.sub>summary{list-style:none;cursor:pointer;padding:10px 0;font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px}.sub .mini{padding-left:12px}
 .mini{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);font-size:14px;color:var(--tx)}
 .mini button{border:0;background:transparent;color:var(--red);cursor:pointer;font-size:16px}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
@@ -210,13 +215,15 @@ code,.mono{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;background:
       <li>Paga algo con Apple Pay y revisa que aparezca aquí.</li>
     </ol>
   </div>
-  <h3>Categorías</h3>
+  <details class="grp" id="g-cats"><summary>Categorías <span class="cnt" id="n-cats"></span></summary>
   <div id="s-cats"></div>
   <div style="display:flex;gap:8px"><input class="txt" id="s-newcat" placeholder="Nueva categoría" style="margin-top:6px"><button class="chip" id="s-addcat" style="margin-top:6px">Agregar</button></div>
-  <h3>Reglas de comercio</h3>
-  <p>Cuando el comercio de Apple Pay contiene la palabra, se pone la categoría sola.</p>
+  </details>
+  <details class="grp" id="g-regs"><summary>Reglas de comercio <span class="cnt" id="n-regs"></span></summary>
+  <p>Cuando el comercio contiene la palabra, se pone la categoría sola. Agrupadas por categoría: toca una para ver sus palabras.</p>
   <div id="s-regs"></div>
   <div style="display:flex;gap:8px;flex-wrap:wrap"><input class="txt" id="s-rw" placeholder="Palabra (ej. wong)" style="flex:1;min-width:120px"><select class="txt" id="s-rc" style="flex:1;min-width:120px"></select><button class="chip" id="s-addreg" style="margin-top:12px">Agregar</button></div>
+  </details>
   <h3>Bloqueo con PIN</h3>
   <p id="s-pin-p">Pide un PIN de 4 dígitos para entrar a la app, aunque la sesión siga abierta. Se guarda solo en este equipo.</p>
   <button class="btn sec" id="s-pin">Activar PIN</button>
@@ -514,7 +521,16 @@ $('n-hoy').onclick=function(){tab('hoy')};$('n-res').onclick=function(){tab('res
 /* ---------- ajustes ---------- */
 function drawSet(){
   $('s-cats').innerHTML=st.cats.map(function(c){return'<div class="mini"><span>'+esc(c)+'</span><button data-c="'+esc(c)+'" aria-label="Quitar">✕</button></div>'}).join('');
-  $('s-regs').innerHTML=st.regs.map(function(r){return'<div class="mini"><span>'+esc(r.palabra)+' → '+esc(r.categoria)+'</span><button data-r="'+esc(r.palabra)+'" aria-label="Quitar">✕</button></div>'}).join('')||'<p>Sin reglas todavía.</p>';
+  // reglas agrupadas por categoría (cada grupo se abre/cierra a mano; se recuerda cuáles estaban abiertos)
+  var abiertos={};document.querySelectorAll('#s-regs details[open]').forEach(function(d){abiertos[d.getAttribute('data-g')]=1});
+  var grupos={};st.regs.forEach(function(r){(grupos[r.categoria]=grupos[r.categoria]||[]).push(r)});
+  var orden=st.cats.filter(function(c){return grupos[c]}).concat(Object.keys(grupos).filter(function(c){return st.cats.indexOf(c)<0}));
+  $('s-regs').innerHTML=orden.map(function(c){
+    var rs=grupos[c].sort(function(a,b){return a.palabra.localeCompare(b.palabra)});
+    return '<details class="sub" data-g="'+esc(c)+'"'+(abiertos[c]?' open':'')+'><summary>'+esc(c)+' <span class="cnt">'+rs.length+'</span></summary>'+
+      rs.map(function(r){return'<div class="mini"><span>'+esc(r.palabra)+'</span><button data-r="'+esc(r.palabra)+'" aria-label="Quitar">✕</button></div>'}).join('')+'</details>';
+  }).join('')||'<p>Sin reglas todavía.</p>';
+  $('n-cats').textContent=st.cats.length;$('n-regs').textContent=st.regs.length;
   $('s-rc').innerHTML=st.cats.map(function(c){return'<option>'+esc(c)+'</option>'}).join('');
 }
 
