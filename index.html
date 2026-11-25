@@ -236,8 +236,35 @@ function show(which){$('auth').classList.toggle('hide',which!=='auth');$('app').
 function chips(box,items,cur,cb,allowOff){box.innerHTML='';items.forEach(function(it){var b=document.createElement('button');b.type='button';b.className='chip'+(cur===it[0]?' on':'');b.textContent=it[1];b.onclick=function(){cb(allowOff&&cur===it[0]?'':it[0])};box.appendChild(b)})}
 function drawEntry(){
   chips($('f-medio'),MEDIOS,st.medio,function(v){st.medio=v||st.medio;try{localStorage.setItem('medio',st.medio)}catch(e){}drawEntry()});
-  chips($('f-cat'),st.cats.map(function(c){return[c,c]}),st.cat,function(v){st.cat=v;drawEntry()},true);
+  // Categorías: solo las recomendadas (máx. 4) según lo escrito en "¿En qué?" y las más usadas; el resto con "Más…".
+  var lista=st.verCats?st.cats:sugerirCats($('f-concepto').value);
+  if(st.cat&&lista.indexOf(st.cat)<0)lista=[st.cat].concat(lista);
+  var items=lista.map(function(c){return[c,c]});
+  if(st.cats.length>lista.length||st.verCats)items.push(['__mas',st.verCats?'Menos ▴':'Más… ▾']);
+  chips($('f-cat'),items,st.cat,function(v){
+    if(v==='__mas'||(v===''&&st.cat==='__mas')){st.verCats=!st.verCats;drawEntry();return}
+    st.cat=v;st.verCats=false;drawEntry();
+  },true);
 }
+function sugerirCats(txt){
+  var t=(txt||'').toLowerCase().trim(),out=[];
+  function add(c){if(c&&st.cats.indexOf(c)>=0&&out.indexOf(c)<0)out.push(c)}
+  if(t.length>=2){
+    // 1) reglas de la persona (palabra contenida en lo escrito, o lo escrito al inicio de la palabra)
+    st.regs.filter(function(r){var w=r.palabra.toLowerCase();return t.indexOf(w)>=0||(t.length>=3&&w.indexOf(t)===0)})
+      .sort(function(a,b){return b.palabra.length-a.palabra.length}).forEach(function(r){add(r.categoria)});
+    // 2) gastos anteriores con un concepto parecido
+    var cnt={};st.gastos.forEach(function(g){if(g.categoria&&g.concepto&&g.concepto.toLowerCase().indexOf(t)>=0)cnt[g.categoria]=(cnt[g.categoria]||0)+1});
+    Object.keys(cnt).sort(function(a,b){return cnt[b]-cnt[a]}).forEach(add);
+  }
+  // 3) completar con las más usadas en los últimos 60 días
+  var lim=new Date(Date.now()-5*3600e3-60*864e5).toISOString().slice(0,10),uso={};
+  st.gastos.forEach(function(g){if(g.categoria&&g.fecha>=lim)uso[g.categoria]=(uso[g.categoria]||0)+1});
+  Object.keys(uso).sort(function(a,b){return uso[b]-uso[a]}).forEach(function(c){if(out.length<4)add(c)});
+  st.cats.forEach(function(c){if(out.length<4)add(c)});
+  return out.slice(0,4);
+}
+$('f-concepto').addEventListener('input',function(){if(!st.verCats)drawEntry()});
 
 /* ---------- auth ---------- */
 var recovery=/type=recovery/.test(location.hash);
@@ -349,7 +376,7 @@ $('f-save').onclick=async function(){
   var r=await sb.from('gastos').insert({monto:m,moneda:'PEN',concepto:$('f-concepto').value.trim()||null,categoria:st.cat||null,medio:st.medio,origen:'manual'});
   b.disabled=false;
   if(r.error){toast('No se guardó: '+r.error.message);return}
-  $('f-monto').value='';$('f-concepto').value='';st.cat='';drawEntry();toast('Guardado');cargar();
+  $('f-monto').value='';$('f-concepto').value='';st.cat='';st.verCats=false;drawEntry();toast('Guardado');cargar();
 };
 $('f-monto').addEventListener('keydown',function(e){if(e.key==='Enter')$('f-save').click()});
 
