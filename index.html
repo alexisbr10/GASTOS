@@ -41,6 +41,12 @@ main{max-width:560px;margin:-52px auto 0;padding:0 14px}
 .chip.on{background:var(--ink);border-color:var(--ink);color:#fff}
 @media (prefers-color-scheme:dark){.chip.on{background:var(--ink2);border-color:var(--ink2)}}
 .cbox{position:relative}.cdrop{position:absolute;left:0;right:0;top:100%;z-index:30;max-height:280px;overflow:auto;background:var(--card);border:1.5px solid var(--line);border-radius:12px;margin-top:4px;box-shadow:0 8px 24px rgba(0,0,0,.25)}.cdrop button{display:block;width:100%;text-align:left;padding:12px 14px;background:none;border:0;border-bottom:1px solid var(--line);font-size:16px;color:inherit;cursor:pointer}.cdrop button:last-child{border-bottom:0}.cdrop button.on{font-weight:700}.cdrop button.new{color:var(--mut)}
+.lock{position:fixed;inset:0;z-index:9999;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;padding-top:calc(24px + env(safe-area-inset-top))}
+.lock h2{margin:0 0 6px;font-size:22px}.lock p{margin:0 0 18px;color:var(--mut);text-align:center;min-height:20px}
+.dots{display:flex;gap:16px;margin-bottom:28px}.dots i{width:16px;height:16px;border-radius:50%;border:2px solid var(--mut)}.dots i.on{background:var(--mint);border-color:var(--mint)}
+.dots.mal{animation:temb .35s}@keyframes temb{25%{transform:translateX(-8px)}75%{transform:translateX(8px)}}
+.pad{display:grid;grid-template-columns:repeat(3,76px);gap:16px}.pad button{height:76px;border-radius:50%;border:1.5px solid var(--line);background:var(--card);color:var(--tx);font-size:28px;font-weight:600;cursor:pointer}
+.pad button.t{border:0;background:transparent;font-size:14px;color:var(--mut)}
 .txt{width:100%;border:1.5px solid var(--line);background:transparent;border-radius:12px;padding:12px 14px;font-size:16px;margin-top:12px;outline:0}
 .txt:focus{border-color:var(--mint)}
 .btn{width:100%;border:0;border-radius:14px;padding:15px;font-weight:700;font-size:17px;background:var(--mint);color:#06281f;cursor:pointer;margin-top:14px}
@@ -211,10 +217,24 @@ code,.mono{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;background:
   <p>Cuando el comercio de Apple Pay contiene la palabra, se pone la categoría sola.</p>
   <div id="s-regs"></div>
   <div style="display:flex;gap:8px;flex-wrap:wrap"><input class="txt" id="s-rw" placeholder="Palabra (ej. wong)" style="flex:1;min-width:120px"><select class="txt" id="s-rc" style="flex:1;min-width:120px"></select><button class="chip" id="s-addreg" style="margin-top:12px">Agregar</button></div>
+  <h3>Bloqueo con PIN</h3>
+  <p id="s-pin-p">Pide un PIN de 4 dígitos para entrar a la app, aunque la sesión siga abierta. Se guarda solo en este equipo.</p>
+  <button class="btn sec" id="s-pin">Activar PIN</button>
+  <div id="s-pin-w" class="hide">
+    <p style="margin-top:10px">Pedir el PIN al volver a la app después de:</p>
+    <select class="txt" id="s-pin-t"><option value="0">Siempre (inmediato)</option><option value="1">1 minuto</option><option value="5">5 minutos</option><option value="15">15 minutos</option></select>
+    <button class="btn sec" id="s-pin-off" style="margin-top:10px">Quitar PIN</button>
+  </div>
   <h3>Cuenta</h3>
   <button class="btn sec" id="s-out">Cerrar sesión</button>
 </dialog>
 
+<div class="lock hide" id="lock">
+  <h2 id="lk-t">Mis gastos</h2>
+  <p id="lk-p">Ingresa tu PIN</p>
+  <div class="dots" id="lk-d"><i></i><i></i><i></i><i></i></div>
+  <div class="pad" id="lk-pad"></div>
+</div>
 <div class="toast" id="toast"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
@@ -305,6 +325,7 @@ async function boot(){
     $('pend-re').classList.toggle('hide',bloq);show('pend');return;
   }
   $('s-adm').classList.toggle('hide',!st.admin);
+  pinPedir();
   show('app');await cargar();suscribir();
 }
 $('a-go').onclick=async function(){
@@ -496,7 +517,67 @@ function drawSet(){
   $('s-regs').innerHTML=st.regs.map(function(r){return'<div class="mini"><span>'+esc(r.palabra)+' → '+esc(r.categoria)+'</span><button data-r="'+esc(r.palabra)+'" aria-label="Quitar">✕</button></div>'}).join('')||'<p>Sin reglas todavía.</p>';
   $('s-rc').innerHTML=st.cats.map(function(c){return'<option>'+esc(c)+'</option>'}).join('');
 }
-$('b-set').onclick=function(){drawSet();$('d-set').showModal();if(st.admin)drawUsuarios()};
+
+/* ---------- Bloqueo con PIN (por equipo y por usuario; aparte de la sesión) ---------- */
+var LK={modo:'',pin:'',primero:'',fallos:0,ok:null,oculto:0};
+function pinKey(){return 'pin_'+st.uid}
+function pinData(){try{return JSON.parse(localStorage.getItem(pinKey())||'null')}catch(e){return null}}
+function pinGuardar(d){try{if(d)localStorage.setItem(pinKey(),JSON.stringify(d));else localStorage.removeItem(pinKey())}catch(e){}}
+async function pinHash(pin,salt){var b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(salt+':'+pin));return Array.from(new Uint8Array(b)).map(function(x){return x.toString(16).padStart(2,'0')}).join('')}
+function lkPintar(){Array.prototype.forEach.call($('lk-d').children,function(d,i){d.classList.toggle('on',i<LK.pin.length)})}
+function lkMal(msg){var d=$('lk-d');d.classList.remove('mal');void d.offsetWidth;d.classList.add('mal');LK.pin='';lkPintar();$('lk-p').textContent=msg}
+function lkAbrir(modo,ok){
+  LK.modo=modo;LK.pin='';LK.primero='';LK.ok=ok||null;
+  document.querySelectorAll('dialog[open]').forEach(function(d){d.close()});
+  $('lk-t').textContent=modo==='entrar'?'Mis gastos':'PIN de la app';
+  $('lk-p').textContent=modo==='entrar'?'Ingresa tu PIN':modo==='nuevo'?'Elige un PIN de 4 dígitos':'Ingresa tu PIN actual';
+  var pad=$('lk-pad');pad.innerHTML='';
+  ['1','2','3','4','5','6','7','8','9',modo==='entrar'?'olvide':'cancelar','0','borrar'].forEach(function(k){
+    var b=document.createElement('button');b.type='button';
+    if(k==='olvide'){b.className='t';b.textContent='Olvidé mi PIN'}else if(k==='cancelar'){b.className='t';b.textContent='Cancelar'}else if(k==='borrar'){b.className='t';b.textContent='⌫ Borrar'}else b.textContent=k;
+    b.onclick=function(){lkTecla(k)};pad.appendChild(b);
+  });
+  lkPintar();$('lock').classList.remove('hide');
+}
+function lkCerrar(){$('lock').classList.add('hide');LK.modo=''}
+async function lkTecla(k){
+  if(k==='borrar'){LK.pin=LK.pin.slice(0,-1);lkPintar();return}
+  if(k==='cancelar'){lkCerrar();return}
+  if(k==='olvide'){
+    if(confirm('Para entrar sin PIN debes cerrar sesión y volver a ingresar con tu correo y contraseña. El PIN se borrará de este equipo. ¿Continuar?')){pinGuardar(null);await sb.auth.signOut();location.reload()}
+    return;
+  }
+  if(LK.pin.length>=4)return;
+  LK.pin+=k;lkPintar();if(LK.pin.length<4)return;
+  var d=pinData();
+  if(LK.modo==='entrar'||LK.modo==='actual'){
+    if(d&&await pinHash(LK.pin,d.salt)===d.hash){LK.fallos=0;var ok=LK.ok;lkCerrar();if(ok)ok();return}
+    LK.fallos++;
+    if(LK.modo==='entrar'&&LK.fallos>=5){pinGuardar(null);await sb.auth.signOut();alert('Demasiados intentos. Vuelve a ingresar con tu correo y contraseña.');location.reload();return}
+    lkMal('PIN incorrecto'+(LK.modo==='entrar'?' ('+(5-LK.fallos)+' intentos)':''));return;
+  }
+  if(LK.modo==='nuevo'){
+    if(!LK.primero){LK.primero=LK.pin;LK.pin='';lkPintar();$('lk-p').textContent='Repite el PIN';return}
+    if(LK.pin!==LK.primero){LK.primero='';lkMal('No coinciden. Elige un PIN de 4 dígitos');return}
+    var salt=Array.from(crypto.getRandomValues(new Uint8Array(12))).map(function(x){return x.toString(16).padStart(2,'0')}).join('');
+    var prev=pinData();pinGuardar({salt:salt,hash:await pinHash(LK.pin,salt),min:prev?prev.min:0});
+    lkCerrar();drawPin();toast('PIN activado');
+  }
+}
+function pinPedir(){var d=pinData();if(d&&st.uid)lkAbrir('entrar')}
+function drawPin(){
+  var d=pinData();$('s-pin').textContent=d?'Cambiar PIN':'Activar PIN';$('s-pin-w').classList.toggle('hide',!d);
+  if(d)$('s-pin-t').value=String(d.min||0);
+}
+$('s-pin').onclick=function(){if(pinData())lkAbrir('actual',function(){lkAbrir('nuevo')});else lkAbrir('nuevo')};
+$('s-pin-off').onclick=function(){lkAbrir('actual',function(){pinGuardar(null);drawPin();toast('PIN quitado')})};
+$('s-pin-t').onchange=function(){var d=pinData();if(d){d.min=Number(this.value)||0;pinGuardar(d)}};
+document.addEventListener('visibilitychange',function(){
+  if(document.visibilityState==='hidden'){LK.oculto=Date.now();return}
+  var d=pinData();if(!d||!st.uid||LK.modo==='entrar'||$('app').classList.contains('hide'))return;
+  if(LK.oculto&&Date.now()-LK.oculto>=(d.min||0)*60000)pinPedir();
+});
+$('b-set').onclick=function(){drawSet();drawPin();$('d-set').showModal();if(st.admin)drawUsuarios()};
 async function drawUsuarios(){
   var r=await sb.rpc('listar_usuarios');
   if(r.error){$('s-usr').innerHTML='<p>No se pudo cargar: '+esc(r.error.message)+'</p>';return}
