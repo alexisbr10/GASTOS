@@ -40,6 +40,7 @@ main{max-width:560px;margin:-52px auto 0;padding:0 14px}
 .chip{border:1.5px solid var(--line);background:transparent;border-radius:999px;padding:9px 14px;font-weight:600;font-size:15px;cursor:pointer}
 .chip.on{background:var(--ink);border-color:var(--ink);color:#fff}
 @media (prefers-color-scheme:dark){.chip.on{background:var(--ink2);border-color:var(--ink2)}}
+.cbox{position:relative}.cdrop{position:absolute;left:0;right:0;top:100%;z-index:30;max-height:280px;overflow:auto;background:var(--card);border:1.5px solid var(--line);border-radius:12px;margin-top:4px;box-shadow:0 8px 24px rgba(0,0,0,.25)}.cdrop button{display:block;width:100%;text-align:left;padding:12px 14px;background:none;border:0;border-bottom:1px solid var(--line);font-size:16px;color:inherit;cursor:pointer}.cdrop button:last-child{border-bottom:0}.cdrop button.on{font-weight:700}.cdrop button.new{color:var(--mut)}
 .txt{width:100%;border:1.5px solid var(--line);background:transparent;border-radius:12px;padding:12px 14px;font-size:16px;margin-top:12px;outline:0}
 .txt:focus{border-color:var(--mint)}
 .btn{width:100%;border:0;border-radius:14px;padding:15px;font-weight:700;font-size:17px;background:var(--mint);color:#06281f;cursor:pointer;margin-top:14px}
@@ -148,7 +149,7 @@ code,.mono{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;background:
         <div class="amt"><span>S/</span><input id="f-monto" inputmode="decimal" placeholder="0.00" autocomplete="off"></div>
         <div class="chips" id="f-medio"></div>
         <input class="txt" id="f-concepto" placeholder="¿En qué? (opcional)" autocomplete="off">
-        <div class="chips" id="f-cat"></div>
+        <div class="cbox"><input class="txt" id="f-catq" placeholder="Categoría (opcional)" autocomplete="off" autocorrect="off"><div class="cdrop hide" id="f-catl"></div></div>
         <button class="btn" id="f-save">Guardar gasto</button>
       </div>
       <div id="lista"></div>
@@ -236,35 +237,51 @@ function show(which){$('auth').classList.toggle('hide',which!=='auth');$('app').
 function chips(box,items,cur,cb,allowOff){box.innerHTML='';items.forEach(function(it){var b=document.createElement('button');b.type='button';b.className='chip'+(cur===it[0]?' on':'');b.textContent=it[1];b.onclick=function(){cb(allowOff&&cur===it[0]?'':it[0])};box.appendChild(b)})}
 function drawEntry(){
   chips($('f-medio'),MEDIOS,st.medio,function(v){st.medio=v||st.medio;try{localStorage.setItem('medio',st.medio)}catch(e){}drawEntry()});
-  // Categorías: solo las recomendadas (máx. 4) según lo escrito en "¿En qué?" y las más usadas; el resto con "Más…".
-  var lista=st.verCats?st.cats:sugerirCats($('f-concepto').value);
-  if(st.cat&&lista.indexOf(st.cat)<0)lista=[st.cat].concat(lista);
-  var items=lista.map(function(c){return[c,c]});
-  if(st.cats.length>lista.length||st.verCats)items.push(['__mas',st.verCats?'Menos ▴':'Más… ▾']);
-  chips($('f-cat'),items,st.cat,function(v){
-    if(v==='__mas'||(v===''&&st.cat==='__mas')){st.verCats=!st.verCats;drawEntry();return}
-    st.cat=v;st.verCats=false;drawEntry();
-  },true);
+  if(document.activeElement!==$('f-catq'))$('f-catq').value=st.cat||'';
 }
-function sugerirCats(txt){
-  var t=(txt||'').toLowerCase().trim(),out=[];
-  function add(c){if(c&&st.cats.indexOf(c)>=0&&out.indexOf(c)<0)out.push(c)}
+/* Categoría del registro rápido: campo que despliega todas las categorías y filtra al escribir. */
+function normTxt(x){return String(x||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').trim()}
+function ordenCats(txt){
+  // primero las que sugiere lo escrito en "¿En qué?" (reglas y gastos anteriores), luego el resto en su orden
+  var t=normTxt(txt),pri=[];
   if(t.length>=2){
-    // 1) reglas de la persona (palabra contenida en lo escrito, o lo escrito al inicio de la palabra)
-    st.regs.filter(function(r){var w=r.palabra.toLowerCase();return t.indexOf(w)>=0||(t.length>=3&&w.indexOf(t)===0)})
-      .sort(function(a,b){return b.palabra.length-a.palabra.length}).forEach(function(r){add(r.categoria)});
-    // 2) gastos anteriores con un concepto parecido
-    var cnt={};st.gastos.forEach(function(g){if(g.categoria&&g.concepto&&g.concepto.toLowerCase().indexOf(t)>=0)cnt[g.categoria]=(cnt[g.categoria]||0)+1});
-    Object.keys(cnt).sort(function(a,b){return cnt[b]-cnt[a]}).forEach(add);
+    st.regs.filter(function(r){var w=normTxt(r.palabra);return t.indexOf(w)>=0||(t.length>=3&&w.indexOf(t)===0)})
+      .sort(function(a,b){return b.palabra.length-a.palabra.length}).forEach(function(r){if(pri.indexOf(r.categoria)<0)pri.push(r.categoria)});
+    var cnt={};st.gastos.forEach(function(g){if(g.categoria&&g.concepto&&normTxt(g.concepto).indexOf(t)>=0)cnt[g.categoria]=(cnt[g.categoria]||0)+1});
+    Object.keys(cnt).sort(function(a,b){return cnt[b]-cnt[a]}).forEach(function(c){if(pri.indexOf(c)<0)pri.push(c)});
   }
-  // 3) completar con las más usadas en los últimos 60 días
-  var lim=new Date(Date.now()-5*3600e3-60*864e5).toISOString().slice(0,10),uso={};
-  st.gastos.forEach(function(g){if(g.categoria&&g.fecha>=lim)uso[g.categoria]=(uso[g.categoria]||0)+1});
-  Object.keys(uso).sort(function(a,b){return uso[b]-uso[a]}).forEach(function(c){if(out.length<4)add(c)});
-  st.cats.forEach(function(c){if(out.length<4)add(c)});
-  return out.slice(0,4);
+  pri=pri.filter(function(c){return st.cats.indexOf(c)>=0});
+  return pri.concat(st.cats.filter(function(c){return pri.indexOf(c)<0}));
 }
-$('f-concepto').addEventListener('input',function(){if(!st.verCats)drawEntry()});
+function abrirCats(){
+  var q=$('f-catq').value,nq=normTxt(q),box=$('f-catl');box.innerHTML='';
+  var lista=ordenCats($('f-concepto').value);
+  if(nq&&nq!==normTxt(st.cat))lista=lista.filter(function(c){return normTxt(c).indexOf(nq)>=0});
+  lista.forEach(function(c){
+    var b=document.createElement('button');b.type='button';b.textContent=c;if(c===st.cat)b.className='on';
+    b.addEventListener('pointerdown',function(e){e.preventDefault();elegirCat(c)});box.appendChild(b);
+  });
+  if(q.trim()&&!st.cats.some(function(c){return normTxt(c)===nq})){
+    var n=document.createElement('button');n.type='button';n.className='new';n.textContent='+ Crear categoría «'+q.trim()+'»';
+    n.addEventListener('pointerdown',async function(e){e.preventDefault();var nom=q.trim();
+      var r=await sb.from('categorias').insert({uid:st.uid,nombre:nom,orden:st.cats.length+1});
+      if(r.error){toast('No se pudo crear');return}
+      st.cats.push(nom);elegirCat(nom);toast('Categoría creada');});
+    box.appendChild(n);
+  }
+  box.classList.toggle('hide',!box.children.length);
+}
+function elegirCat(c){st.cat=c;$('f-catq').value=c;$('f-catl').classList.add('hide');$('f-catq').blur()}
+$('f-catq').addEventListener('focus',function(){$('f-catq').select();abrirCats()});
+$('f-catq').addEventListener('input',function(){if(!$('f-catq').value.trim())st.cat='';abrirCats()});
+$('f-catq').addEventListener('blur',function(){
+  setTimeout(function(){
+    $('f-catl').classList.add('hide');
+    var v=normTxt($('f-catq').value),hit=st.cats.filter(function(c){return normTxt(c)===v})[0];
+    if(!v)st.cat='';else if(hit)st.cat=hit;
+    $('f-catq').value=st.cat||'';
+  },150);
+});
 
 /* ---------- auth ---------- */
 var recovery=/type=recovery/.test(location.hash);
@@ -376,7 +393,7 @@ $('f-save').onclick=async function(){
   var r=await sb.from('gastos').insert({monto:m,moneda:'PEN',concepto:$('f-concepto').value.trim()||null,categoria:st.cat||null,medio:st.medio,origen:'manual'});
   b.disabled=false;
   if(r.error){toast('No se guardó: '+r.error.message);return}
-  $('f-monto').value='';$('f-concepto').value='';st.cat='';st.verCats=false;drawEntry();toast('Guardado');cargar();
+  $('f-monto').value='';$('f-concepto').value='';st.cat='';drawEntry();toast('Guardado');cargar();
 };
 $('f-monto').addEventListener('keydown',function(e){if(e.key==='Enter')$('f-save').click()});
 
